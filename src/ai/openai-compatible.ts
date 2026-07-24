@@ -1,4 +1,4 @@
-import { aiInsightSchema, type AiProvider } from "./contracts";
+import { parseAiInsight, type AiProvider } from "./contracts";
 
 export class OpenAiCompatibleProvider implements AiProvider {
   constructor(
@@ -33,6 +33,6 @@ export class OpenAiCompatibleProvider implements AiProvider {
     const json = await response.json();
     const content = json.choices?.[0]?.message?.content;
     if (!content) throw new Error("AI provider returned an empty response");
-    return aiInsightSchema.parse(JSON.parse(content));
+    return parseAiInsight(content);
   }
 }

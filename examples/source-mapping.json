@@ -1,0 +1,25 @@
+{
+  "projectId": "PROJECT_ID",
+  "platform": "META",
+  "accountId": "act_account_id",
+  "mappings": [
+    { "canonicalField": "date", "sourceColumn": "Date", "required": true },
+    { "canonicalField": "hour", "sourceColumn": "Hour", "required": false, "defaultValue": 0 },
+    { "canonicalField": "entityLevel", "sourceColumn": "Level", "required": true },
+    { "canonicalField": "campaignId", "sourceColumn": "Campaign ID", "required": true },
+    { "canonicalField": "adsetId", "sourceColumn": "Ad set ID", "required": false },
+    { "canonicalField": "adId", "sourceColumn": "Ad ID", "required": false },
+    { "canonicalField": "entityName", "sourceColumn": "Name", "required": true },
+    { "canonicalField": "status", "sourceColumn": "Delivery", "required": true },
+    { "canonicalField": "budgetType", "sourceColumn": "Budget type", "required": false, "defaultValue": "UNKNOWN" },
+    { "canonicalField": "budget", "sourceColumn": "Budget", "required": false },
+    { "canonicalField": "spend", "sourceColumn": "Amount spent", "required": true },
+    { "canonicalField": "result", "sourceColumn": "Results", "required": false },
+    { "canonicalField": "qualifiedResult", "sourceColumn": "Qualified results", "required": false },
+    { "canonicalField": "revenue", "sourceColumn": "Revenue", "required": false },
+    { "canonicalField": "impressions", "sourceColumn": "Impressions", "required": false },
+    { "canonicalField": "clicks", "sourceColumn": "Link clicks", "required": false },
+    { "canonicalField": "sourceUpdatedAt", "sourceColumn": "Updated at", "required": true }
+  ],
+  "rows": []
+}

@@ -13,7 +13,14 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "approvalStatus", "order": "ASCENDING" },
-        { "fieldPath": "priority", "order": "DESCENDING" }
+        { "fieldPath": "runAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "facts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date", "order": "ASCENDING" }
       ]
     }
   ],

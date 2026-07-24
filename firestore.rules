@@ -2,14 +2,20 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function isAdmin() { return signedIn() && request.auth.token.role == "admin"; }
+    function inOrganization(orgId) { return signedIn() && request.auth.token.organizationId == orgId; }
     match /organizations/{orgId}/{document=**} {
-      allow read: if signedIn() && request.auth.token.organizationId == orgId;
-      allow write: if isAdmin() && request.auth.token.organizationId == orgId;
+      allow read: if inOrganization(orgId);
+      allow write: if false;
     }
-    match /projects/{projectId}/{document=**} {
-      allow read: if signedIn();
-      allow write: if isAdmin();
+    match /projects/{projectId} {
+      allow read: if signedIn() && resource.data.organizationId == request.auth.token.organizationId;
+      allow write: if false;
+      match /{document=**} {
+        allow read: if signedIn()
+          && get(/databases/$(database)/documents/projects/$(projectId)).data.organizationId
+          == request.auth.token.organizationId;
+        allow write: if false;
+      }
     }
   }
 }

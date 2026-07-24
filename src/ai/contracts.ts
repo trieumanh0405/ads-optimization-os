@@ -16,6 +16,13 @@ export const aiInsightSchema = z.object({
 
 export type AiInsight = z.infer<typeof aiInsightSchema>;
 
+export function parseAiInsight(content: string): AiInsight {
+  const trimmed = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = trimmed.indexOf("{"); const end = trimmed.lastIndexOf("}");
+  if (start < 0 || end < start) throw new Error("AI_PROVIDER_RESPONSE_IS_NOT_JSON");
+  return aiInsightSchema.parse(JSON.parse(trimmed.slice(start, end + 1)));
+}
+
 export interface AiProvider {
   id: string;
   analyze(input: {

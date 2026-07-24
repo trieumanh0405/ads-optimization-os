@@ -8,6 +8,8 @@
 4. **Action workflow** handles approval, execution status and append-only audit.
 5. **AI diagnostics** analyzes supporting metrics but cannot override or execute rules.
 
+The formula source of truth is `src/core`. The earlier spreadsheet and transcript are reference behavior, not runtime dependencies.
+
 ## Firebase collections
 
 - `organizations/{organizationId}`

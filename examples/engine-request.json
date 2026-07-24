@@ -1,0 +1,85 @@
+{
+  "asOfDate": "2026-07-20",
+  "runAt": "2026-07-20T08:00:00+07:00",
+  "config": {
+    "projectId": "PROJECT_ID",
+    "projectName": "Project name",
+    "platform": "META",
+    "accountId": "act_account_id",
+    "timezone": "Asia/Bangkok",
+    "currency": "VND",
+    "startDate": "2026-07-01",
+    "primaryMetricKey": "CPL",
+    "target": 750000,
+    "ruleSetId": "LEAD_V1",
+    "ruleVersion": 1,
+    "dataFreshnessHours": 6,
+    "windows": [
+      { "id": "TODAY", "days": 1, "weight": 0.4, "required": true },
+      { "id": "SHORT", "days": 3, "weight": 0.6, "required": true },
+      { "id": "LONG", "days": 7, "weight": 0, "required": false }
+    ],
+    "contextWeights": {
+      "CAMPAIGN": { "entity": 0.7, "context": 0.3 },
+      "ADSET": { "entity": 0.7, "context": 0.3 },
+      "AD": { "entity": 0.8, "context": 0.2 }
+    },
+    "maxDailyScalePct": 0.2,
+    "maxDailyScaleActions": 3,
+    "deferParentScaleWhenChildAction": true
+  },
+  "metricDefinitions": [
+    {
+      "key": "CPL",
+      "label": "Cost per lead",
+      "kind": "RATIO",
+      "numerator": "spend",
+      "denominator": "result",
+      "multiplier": 1,
+      "direction": "LOWER_IS_BETTER",
+      "nullWhenDenominatorZero": true
+    }
+  ],
+  "rules": [
+    {
+      "id": "AD_OFF",
+      "ruleSetId": "LEAD_V1",
+      "version": 1,
+      "entityLevel": "AD",
+      "metricKey": "CPL",
+      "scoreSource": "CONTEXT_WEIGHTED",
+      "evidenceSource": "TODAY_PLUS_SHORT",
+      "minSpendAbsolute": null,
+      "minSpendTargetMultiple": 0.8,
+      "minResults": 2,
+      "operator": "LT",
+      "thresholdFrom": 0.8,
+      "thresholdTo": null,
+      "actionCode": "TURN_OFF",
+      "actionValue": null,
+      "priority": 100,
+      "enabled": true
+    },
+    {
+      "id": "AD_KEEP",
+      "ruleSetId": "LEAD_V1",
+      "version": 1,
+      "entityLevel": "AD",
+      "metricKey": "CPL",
+      "scoreSource": "CONTEXT_WEIGHTED",
+      "evidenceSource": "TODAY_PLUS_SHORT",
+      "minSpendAbsolute": null,
+      "minSpendTargetMultiple": 0.8,
+      "minResults": 2,
+      "operator": "GTE",
+      "thresholdFrom": 0.8,
+      "thresholdTo": null,
+      "actionCode": "KEEP",
+      "actionValue": null,
+      "priority": 100,
+      "enabled": true
+    }
+  ],
+  "facts": [],
+  "priorActions": []
+}
