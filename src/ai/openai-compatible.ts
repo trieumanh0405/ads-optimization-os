@@ -18,6 +18,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`
       },
+      signal: AbortSignal.timeout(55_000),
       body: JSON.stringify({
         model: input.model,
         temperature: 0.1,

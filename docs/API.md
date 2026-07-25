@@ -1,6 +1,10 @@
 # API contracts
 
-All stored-project and AI routes require a Firebase ID token with `organizationId` and `role` custom claims.
+Stored-project routes and stored AI configuration routes require a Firebase ID token with `organizationId` and `role` custom claims. Stateless routes and browser BYOK analysis do not require Firebase.
+
+## Health
+
+- `GET /api/health` — runtime status, capabilities and whether Firebase team backend credentials are configured
 
 ## Project configuration
 
@@ -10,12 +14,10 @@ All stored-project and AI routes require a Firebase ID token with `organizationI
 
 ## Data
 
-- `POST /api/normalize` — stateless mapping validation
+- `POST /api/normalize` — stateless canonical/supporting-metric/dimension mapping validation
 - `POST /api/projects/{projectId}/import` — normalize and upsert rows using saved mapping
 
-The project import route accepts either JSON or `Content-Type: text/csv`. For CSV, use `?mode=STRICT` or `?mode=PARTIAL`.
-
-Import body:
+The stored import route accepts JSON or `Content-Type: text/csv`. For CSV, use `?mode=STRICT` or `?mode=PARTIAL`.
 
 ```json
 { "mode": "STRICT", "rows": [{ "Date": "2026-07-20", "Spend": 100000 }] }
@@ -23,11 +25,9 @@ Import body:
 
 ## Optimization
 
-- `POST /api/optimize` — stateless engine execution for development/backtesting
-- `POST /api/backtest` — execute the same request across explicit historical checkpoints
-- `POST /api/projects/{projectId}/run` — load stored facts/config, run QC and engine, then persist run/actions
-
-Run body:
+- `POST /api/optimize` — stateless engine execution used by Browser workspace and tests
+- `POST /api/backtest` — run the same engine across historical checkpoints
+- `POST /api/projects/{projectId}/run` — load stored facts/config, run QC/engine and persist run/actions
 
 ```json
 { "asOfDate": "2026-07-20", "runAt": "2026-07-20T08:00:00+07:00" }
@@ -45,10 +45,15 @@ Run body:
 
 ## AI
 
-- `GET|POST /api/ai/providers`
-- `GET|POST /api/ai/playbooks`
-- `POST /api/ai/analyze`
+- `GET|POST /api/ai/providers` — stored encrypted provider configuration
+- `GET|POST /api/ai/playbooks` — stored playbook configuration
+- `POST /api/ai/analyze` — authenticated analysis using a stored provider
+- `POST /api/ai/direct` — Browser BYOK analysis using selected built-in playbooks
 
-Provider API keys are accepted only by the authenticated server route, encrypted, and omitted from every response.
+Stored provider keys are accepted only by authenticated routes, encrypted and omitted from responses. The direct route accepts a key for one request, permits only public HTTPS base URLs and does not persist the key.
 
-Supported provider kinds: `OPENAI_COMPATIBLE`, `ANTHROPIC`, and `GEMINI`. Every provider owns an allow-list of model IDs, so a project can select different models without changing analysis code.
+Supported provider kinds:
+
+- `OPENAI_COMPATIBLE`
+- `ANTHROPIC`
+- `GEMINI`

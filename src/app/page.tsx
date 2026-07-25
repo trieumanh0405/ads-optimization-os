@@ -1,5 +1,5 @@
-import { OptimizationApp } from "@/components/optimization-app";
+import { WorkspaceApp } from "@/components/workspace-app";
 
 export default function Home() {
-  return <OptimizationApp />;
+  return <WorkspaceApp />;
 }

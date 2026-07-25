@@ -6,6 +6,7 @@ export class AnthropicProvider implements AiProvider {
     const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": this.apiKey, "anthropic-version": "2023-06-01" },
+      signal: AbortSignal.timeout(55_000),
       body: JSON.stringify({
         model: input.model, max_tokens: 2500, temperature: 0.1, system: input.systemPrompt,
         messages: [{ role: "user", content: JSON.stringify(input.payload) }]

@@ -1,0 +1,356 @@
+"use client";
+
+import { useMemo, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, FileSpreadsheet, Plus, Trash2, UploadCloud } from "lucide-react";
+import { parseCsv } from "@/core/csv";
+import type { FactRow } from "@/core/schemas";
+import type { NormalizeError, SourceMapping } from "@/core/normalize";
+import { apiJson } from "@/product/api";
+import { requiredMappingGaps, suggestMappings } from "@/product/mapping";
+import type { LocalProject } from "@/product/types";
+
+type NormalizeResponse = {
+  facts: FactRow[];
+  errors: NormalizeError[];
+  accepted: number;
+  rejected: number;
+};
+
+type Props = {
+  project: LocalProject;
+  onUpdate: (project: LocalProject) => void;
+  notify: (message: string, tone?: "success" | "error") => void;
+};
+
+const fieldLabels: Record<string, string> = {
+  date: "Ngày báo cáo",
+  entityLevel: "Cấp entity",
+  campaignId: "Campaign ID / tên fallback",
+  adsetId: "Ad set ID / tên fallback",
+  adId: "Ad ID / tên fallback",
+  entityName: "Tên entity",
+  status: "Trạng thái",
+  budgetType: "CBO / ABO",
+  budget: "Ngân sách",
+  spend: "Spend",
+  result: "Result",
+  qualifiedResult: "Qualified result",
+  revenue: "Revenue",
+  impressions: "Impressions",
+  clicks: "Link clicks / Clicks",
+  sourceUpdatedAt: "Thời điểm data cập nhật"
+};
+
+export function DataImporter({ project, onUpdate, notify }: Props) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [fileName, setFileName] = useState("");
+  const [rows, setRows] = useState<Record<string, string>[]>([]);
+  const [entityLevel, setEntityLevel] = useState<FactRow["entityLevel"]>("AD");
+  const [budgetType, setBudgetType] = useState<FactRow["budgetType"]>("UNKNOWN");
+  const [mode, setMode] = useState<"STRICT" | "PARTIAL">("STRICT");
+  const [mappings, setMappings] = useState<SourceMapping[]>([]);
+  const [metricMappings, setMetricMappings] = useState(project.metricMappings);
+  const [dimensionMappings, setDimensionMappings] = useState(project.dimensionMappings);
+  const [errors, setErrors] = useState<NormalizeError[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const headers = useMemo(() => rows[0] ? Object.keys(rows[0]) : [], [rows]);
+  const gaps = useMemo(() => requiredMappingGaps(mappings), [mappings]);
+  const errorSummary = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const error of errors) counts.set(error.code, (counts.get(error.code) ?? 0) + 1);
+    return [...counts.entries()];
+  }, [errors]);
+
+  function resetSuggestions(nextRows: Record<string, string>[], nextLevel = entityLevel, nextBudget = budgetType) {
+    const nextHeaders = nextRows[0] ? Object.keys(nextRows[0]) : [];
+    const suggested = suggestMappings(nextHeaders, nextLevel, nextBudget, new Date().toISOString());
+    setMappings(suggested.mappings);
+    setMetricMappings(suggested.metricMappings);
+    setDimensionMappings(suggested.dimensionMappings);
+  }
+
+  async function handleFile(file: File) {
+    try {
+      const parsed = parseCsv(await file.text());
+      setFileName(file.name);
+      setRows(parsed);
+      setErrors([]);
+      resetSuggestions(parsed);
+      notify(`Đã đọc ${parsed.length.toLocaleString("vi-VN")} dòng từ ${file.name}.`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Không đọc được file CSV.", "error");
+    }
+  }
+
+  function changeLevel(next: FactRow["entityLevel"]) {
+    setEntityLevel(next);
+    resetSuggestions(rows, next, budgetType);
+  }
+
+  function changeBudget(next: FactRow["budgetType"]) {
+    setBudgetType(next);
+    resetSuggestions(rows, entityLevel, next);
+  }
+
+  function updateMapping(index: number, sourceColumn: string) {
+    setMappings((current) => current.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, sourceColumn } : item
+    ));
+  }
+
+  async function validateAndImport() {
+    if (!rows.length) return notify("Hãy chọn file CSV trước.", "error");
+    if (gaps.length) return notify(`Thiếu mapping bắt buộc: ${gaps.join(", ")}.`, "error");
+    const metricKeys = metricMappings.map((item) => item.metricKey.trim());
+    const dimensionKeys = dimensionMappings.map((item) => item.dimensionKey.trim());
+    if (metricKeys.some((key) => !key) || new Set(metricKeys).size !== metricKeys.length) {
+      return notify("Supporting metric key không được trống hoặc trùng nhau.", "error");
+    }
+    if (dimensionKeys.some((key) => !key) || new Set(dimensionKeys).size !== dimensionKeys.length) {
+      return notify("Dimension key không được trống hoặc trùng nhau.", "error");
+    }
+    setBusy(true);
+    try {
+      const result = await apiJson<NormalizeResponse>("/api/normalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.config.projectId,
+          platform: project.config.platform,
+          accountId: project.config.accountId,
+          mappings,
+          metricMappings,
+          dimensionMappings,
+          rows
+        })
+      });
+      setErrors(result.errors);
+      if (mode === "STRICT" && result.errors.length) {
+        notify(`Strict mode đã chặn import vì có ${result.errors.length} lỗi.`, "error");
+        return;
+      }
+      const acceptedFacts = mode === "PARTIAL" ? result.facts : result.errors.length ? [] : result.facts;
+      const factsByKey = new Map(project.facts.map((fact) => [fact.sourceRowKey, fact]));
+      for (const fact of acceptedFacts) factsByKey.set(fact.sourceRowKey, fact);
+      const now = new Date().toISOString();
+      onUpdate({
+        ...project,
+        facts: [...factsByKey.values()],
+        mappings,
+        metricMappings,
+        dimensionMappings,
+        imports: [{
+          id: crypto.randomUUID(),
+          importedAt: now,
+          fileName,
+          entityLevel,
+          accepted: acceptedFacts.length,
+          rejected: result.rejected,
+          mode,
+          errorCodes: [...new Set(result.errors.map((item) => item.code))]
+        }, ...project.imports].slice(0, 100),
+        updatedAt: now
+      });
+      notify(`Đã import ${acceptedFacts.length.toLocaleString("vi-VN")} dòng chuẩn hóa.`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Import thất bại.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="viewStack">
+      <section className="sectionCard">
+        <div className="sectionHeader">
+          <div>
+            <span className="sectionKicker">RAW DATA → FACT DAILY</span>
+            <h2>Import và ánh xạ dữ liệu</h2>
+            <p>CSV thật được chuẩn hóa trước khi đưa vào engine. Dòng lỗi không bao giờ âm thầm thành số 0.</p>
+          </div>
+          <div className="segmented" aria-label="Import mode">
+            <button className={mode === "STRICT" ? "active" : ""} onClick={() => setMode("STRICT")}>Strict</button>
+            <button className={mode === "PARTIAL" ? "active" : ""} onClick={() => setMode("PARTIAL")}>Partial</button>
+          </div>
+        </div>
+
+        <input
+          ref={fileInput}
+          className="visuallyHidden"
+          type="file"
+          accept=".csv,text/csv,text/tab-separated-values"
+          onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])}
+        />
+        <button className="dropZone" onClick={() => fileInput.current?.click()}>
+          <UploadCloud size={28} />
+          <strong>{fileName || "Chọn CSV export từ Ads Manager / connector"}</strong>
+          <span>{rows.length ? `${rows.length.toLocaleString("vi-VN")} dòng · ${headers.length} cột` : "Hỗ trợ dấu phẩy, chấm phẩy và tab"}</span>
+        </button>
+
+        <div className="formGrid compact topGap">
+          <label>Cấp dữ liệu
+            <select value={entityLevel} onChange={(event) => changeLevel(event.target.value as FactRow["entityLevel"])}>
+              <option value="CAMPAIGN">Campaign</option>
+              <option value="ADSET">Ad set</option>
+              <option value="AD">Ad</option>
+            </select>
+          </label>
+          <label>Entity sở hữu ngân sách
+            <select value={budgetType} onChange={(event) => changeBudget(event.target.value as FactRow["budgetType"])}>
+              <option value="UNKNOWN">Chưa xác định</option>
+              <option value="CBO">CBO · Campaign sở hữu budget</option>
+              <option value="ABO">ABO · Ad set sở hữu budget</option>
+              <option value="NONE">Không có budget</option>
+            </select>
+          </label>
+          <label>Project
+            <input value={project.config.projectName} readOnly />
+          </label>
+        </div>
+      </section>
+
+      {rows.length > 0 && (
+        <section className="sectionCard">
+          <div className="sectionHeader">
+            <div>
+              <span className="sectionKicker">COLUMN CONTRACT</span>
+              <h2>Mapping cột nguồn</h2>
+              <p>Hệ thống đã tự đoán. Kiểm tra kỹ ID, tên entity, Spend và Result trước khi import.</p>
+            </div>
+            <span className={`statusBadge ${gaps.length ? "danger" : "success"}`}>
+              {gaps.length ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
+              {gaps.length ? `${gaps.length} mapping còn thiếu` : "Đủ trường bắt buộc"}
+            </span>
+          </div>
+          <div className="mappingGrid">
+            {mappings.map((item, index) => (
+              <label key={item.canonicalField} className={item.required && item.sourceColumn === "__DEFAULT__" && item.defaultValue === undefined ? "fieldError" : ""}>
+                <span>{fieldLabels[item.canonicalField] ?? item.canonicalField}{item.required ? " *" : ""}</span>
+                <select value={item.sourceColumn} onChange={(event) => updateMapping(index, event.target.value)}>
+                  <option value="__DEFAULT__">
+                    {item.defaultValue === null ? "Không có / N/A"
+                      : item.defaultValue !== undefined ? `Giá trị cố định: ${String(item.defaultValue)}`
+                        : "— Chưa map —"}
+                  </option>
+                  {headers.map((header) => <option key={header} value={header}>{header}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+
+          <div className="mappingEditors">
+            <div className="mappingEditor">
+              <div className="mappingEditorTitle">
+                <div><strong>Supporting metrics</strong><span>Dùng được trong KPI custom và AI diagnostics.</span></div>
+                <button
+                  className="iconAction"
+                  aria-label="Thêm supporting metric"
+                  onClick={() => setMetricMappings((current) => [...current, {
+                    metricKey: `customMetric${current.length + 1}`,
+                    sourceColumn: headers[0] ?? ""
+                  }])}
+                ><Plus size={15} /></button>
+              </div>
+              {metricMappings.length === 0 && <p className="emptyMapping">Chưa phát hiện · có thể thêm thủ công.</p>}
+              {metricMappings.map((item, index) => (
+                <div className="mappingPair" key={`${item.metricKey}-${index}`}>
+                  <input
+                    aria-label={`Metric key ${index + 1}`}
+                    value={item.metricKey}
+                    onChange={(event) => setMetricMappings((current) => current.map((entry, entryIndex) =>
+                      entryIndex === index ? { ...entry, metricKey: event.target.value.replace(/\s+/g, "") } : entry
+                    ))}
+                  />
+                  <select
+                    aria-label={`Source column for ${item.metricKey}`}
+                    value={item.sourceColumn}
+                    onChange={(event) => setMetricMappings((current) => current.map((entry, entryIndex) =>
+                      entryIndex === index ? { ...entry, sourceColumn: event.target.value } : entry
+                    ))}
+                  >
+                    {headers.map((header) => <option key={header} value={header}>{header}</option>)}
+                  </select>
+                  <button className="iconAction dangerIcon" aria-label={`Xóa metric ${item.metricKey}`} onClick={() => setMetricMappings((current) => current.filter((_, entryIndex) => entryIndex !== index))}><Trash2 size={14} /></button>
+                </div>
+              ))}
+            </div>
+            <div className="mappingEditor">
+              <div className="mappingEditorTitle">
+                <div><strong>Context dimensions</strong><span>Objective, learning, creative/post hoặc breakdown.</span></div>
+                <button
+                  className="iconAction"
+                  aria-label="Thêm context dimension"
+                  onClick={() => setDimensionMappings((current) => [...current, {
+                    dimensionKey: `customDimension${current.length + 1}`,
+                    sourceColumn: headers[0] ?? ""
+                  }])}
+                ><Plus size={15} /></button>
+              </div>
+              {dimensionMappings.length === 0 && <p className="emptyMapping">Chưa phát hiện · có thể thêm thủ công.</p>}
+              {dimensionMappings.map((item, index) => (
+                <div className="mappingPair" key={`${item.dimensionKey}-${index}`}>
+                  <input
+                    aria-label={`Dimension key ${index + 1}`}
+                    value={item.dimensionKey}
+                    onChange={(event) => setDimensionMappings((current) => current.map((entry, entryIndex) =>
+                      entryIndex === index ? { ...entry, dimensionKey: event.target.value.replace(/\s+/g, "") } : entry
+                    ))}
+                  />
+                  <select
+                    aria-label={`Source column for ${item.dimensionKey}`}
+                    value={item.sourceColumn}
+                    onChange={(event) => setDimensionMappings((current) => current.map((entry, entryIndex) =>
+                      entryIndex === index ? { ...entry, sourceColumn: event.target.value } : entry
+                    ))}
+                  >
+                    {headers.map((header) => <option key={header} value={header}>{header}</option>)}
+                  </select>
+                  <button className="iconAction dangerIcon" aria-label={`Xóa dimension ${item.dimensionKey}`} onClick={() => setDimensionMappings((current) => current.filter((_, entryIndex) => entryIndex !== index))}><Trash2 size={14} /></button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="cardActions">
+            <span className="helperText">Strict: có 1 lỗi thì không lưu batch. Partial: chỉ lưu dòng hợp lệ.</span>
+            <button className="primaryAction" disabled={busy || gaps.length > 0} onClick={validateAndImport}>
+              <FileSpreadsheet size={17} />
+              {busy ? "Đang chuẩn hóa…" : "Validate & import"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {errors.length > 0 && (
+        <section className="sectionCard">
+          <div className="sectionHeader">
+            <div>
+              <span className="sectionKicker">IMPORT QC</span>
+              <h2>Lỗi cần xử lý</h2>
+              <p>{errors.length.toLocaleString("vi-VN")} lỗi trên {new Set(errors.map((item) => item.row)).size.toLocaleString("vi-VN")} dòng.</p>
+            </div>
+          </div>
+          <div className="issueChips">
+            {errorSummary.map(([code, count]) => <span key={code}>{code} · {count}</span>)}
+          </div>
+          <div className="tableScroller">
+            <table className="dataTable">
+              <thead><tr><th>Dòng</th><th>Field</th><th>Mã lỗi</th><th>Giá trị</th></tr></thead>
+              <tbody>
+                {errors.slice(0, 100).map((error, index) => (
+                  <tr key={`${error.row}-${error.field}-${index}`}>
+                    <td className="mono">{error.row}</td>
+                    <td>{error.field}</td>
+                    <td><span className="statusBadge danger">{error.code}</span></td>
+                    <td className="mono">{String(error.value ?? "N/A")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}

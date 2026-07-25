@@ -8,6 +8,7 @@ export type ActionRecord = {
   entityLevel: string; entityId: string; entityName: string; currentStatus: string;
   recommendedAction: ActionCode; adjustmentPct: number | null; reasonCodes: string[];
   matchedRuleIds: string[]; evidenceWindow: string; currentMetric: number | null;
+  evaluatedValue: number | null;
   targetMetric: number; confidence: number; executionPhase: number;
   approvalStatus: ApprovalStatus; reviewer: string | null; executedAt: string | null; note: string | null;
   ruleSetId: string; ruleVersion: number; evidenceHash: string;
@@ -26,21 +27,24 @@ export function createActionRecords(input: {
   recommendations: Recommendation[]; runId: string; runAt: string; projectId: string;
   ruleSetId: string; ruleVersion: number; existing: Array<Pick<ActionRecord, "actionKey" | "approvalStatus">>;
 }): ActionRecord[] {
-  const open = new Set(input.existing.filter((item) => item.approvalStatus === "PENDING" || item.approvalStatus === "DEFERRED").map((item) => item.actionKey));
-  return input.recommendations.filter((item) => item.recommendedAction !== "PENDING_DATA").flatMap((item) => {
+  const seen = new Set(input.existing.map((item) => item.actionKey));
+  return input.recommendations
+    .filter((item) => item.recommendedAction !== "PENDING_DATA" && item.recommendedAction !== "KEEP")
+    .flatMap((item) => {
     const hash = evidenceHash(item);
     const actionKey = `${input.projectId}|${item.entityLevel}|${item.entityId}|${item.recommendedAction}|${hash.slice(0, 16)}`;
-    if (open.has(actionKey)) return [];
+    if (seen.has(actionKey)) return [];
     return [{
       id: randomUUID(), actionKey, runId: input.runId, runAt: input.runAt, projectId: input.projectId,
       entityLevel: item.entityLevel, entityId: item.entityId, entityName: item.entityName, currentStatus: item.currentStatus,
       recommendedAction: item.recommendedAction, adjustmentPct: item.adjustmentPct, reasonCodes: item.reasonCodes,
       matchedRuleIds: item.matchedRuleIds, evidenceWindow: item.evidenceWindow, currentMetric: item.currentMetric,
+      evaluatedValue: item.evaluatedValue,
       targetMetric: item.targetMetric, confidence: item.confidence, executionPhase: item.executionPhase,
       approvalStatus: "PENDING" as const, reviewer: null, executedAt: null, note: null,
       ruleSetId: input.ruleSetId, ruleVersion: input.ruleVersion, evidenceHash: hash
     }];
-  });
+    });
 }
 
 const transitions: Record<ApprovalStatus, ApprovalStatus[]> = {

@@ -7,6 +7,7 @@ export class GeminiProvider implements AiProvider {
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(55_000),
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: input.systemPrompt }] },
         contents: [{ role: "user", parts: [{ text: JSON.stringify(input.payload) }] }],

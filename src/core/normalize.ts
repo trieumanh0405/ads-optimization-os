@@ -9,13 +9,44 @@ export const canonicalFieldSchema = z.enum([
 ]);
 export type CanonicalField = z.infer<typeof canonicalFieldSchema>;
 export type SourceMapping = { canonicalField: CanonicalField; sourceColumn: string; required: boolean; defaultValue?: unknown };
-export type NormalizeContext = { projectId: string; platform: string; accountId: string; mappings: SourceMapping[] };
+export type SupportingMetricMapping = { metricKey: string; sourceColumn: string };
+export type DimensionMapping = {
+  dimensionKey: "objective" | "optimizationGoal" | "learningStatus" | "postId" | string;
+  sourceColumn: string;
+};
+export type NormalizeContext = {
+  projectId: string;
+  platform: string;
+  accountId: string;
+  mappings: SourceMapping[];
+  metricMappings?: SupportingMetricMapping[];
+  dimensionMappings?: DimensionMapping[];
+};
 export type NormalizeError = { row: number; field: string; code: string; value: unknown };
 
 function numberOrNull(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const normalized = String(value).replace(/[,\s₫$]/g, "");
+  let normalized = String(value).trim().replace(/[^\d.,-]/g, "");
+  if (!normalized) return null;
+  const lastComma = normalized.lastIndexOf(",");
+  const lastDot = normalized.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimalSeparator = lastComma > lastDot ? "," : ".";
+    const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+    normalized = normalized.split(thousandsSeparator).join("");
+    normalized = normalized.replace(decimalSeparator, ".");
+  } else if (lastComma >= 0) {
+    const commaCount = (normalized.match(/,/g) ?? []).length;
+    const digitsAfter = normalized.length - lastComma - 1;
+    normalized = commaCount > 1 || digitsAfter === 3
+      ? normalized.replace(/,/g, "")
+      : normalized.replace(",", ".");
+  } else if (lastDot >= 0) {
+    const dotCount = (normalized.match(/\./g) ?? []).length;
+    const digitsAfter = normalized.length - lastDot - 1;
+    if (dotCount > 1 || digitsAfter === 3) normalized = normalized.replace(/\./g, "");
+  }
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -41,6 +72,21 @@ export function normalizeRows(rawRows: Record<string, unknown>[], context: Norma
       if (mapping.required && (source === null || source === undefined || source === "")) errors.push({ row: index + 2, field: mapping.canonicalField, code: "REQUIRED_VALUE_MISSING", value: source });
       value[mapping.canonicalField] = source;
     }
+    value.metrics = Object.fromEntries((context.metricMappings ?? []).map((mapping) => [
+      mapping.metricKey,
+      numberOrNull(raw[mapping.sourceColumn])
+    ]));
+    const dimensions = Object.fromEntries((context.dimensionMappings ?? []).map((mapping) => [
+      mapping.dimensionKey,
+      raw[mapping.sourceColumn] === null || raw[mapping.sourceColumn] === undefined || raw[mapping.sourceColumn] === ""
+        ? null
+        : String(raw[mapping.sourceColumn])
+    ]));
+    value.dimensions = dimensions;
+    value.objective = dimensions.objective ?? null;
+    value.optimizationGoal = dimensions.optimizationGoal ?? null;
+    value.learningStatus = dimensions.learningStatus ?? null;
+    value.postId = dimensions.postId ?? null;
     for (const field of ["budget", "spend", "result", "qualifiedResult", "revenue", "impressions", "clicks"] as const) value[field] = numberOrNull(value[field]);
     value.hour = numberOrNull(value.hour);
     value.date = isoDate(value.date);

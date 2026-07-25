@@ -16,6 +16,7 @@ export type Recommendation = {
   matchedRuleIds: string[];
   evidenceWindow: string;
   currentMetric: number | null;
+  evaluatedValue: number | null;
   targetMetric: number;
   weightedAchievement: number | null;
   contextWeightedAchievement: number | null;
@@ -31,10 +32,24 @@ function matches(value: number, rule: OptimizationRule): boolean {
   return value >= rule.thresholdFrom && value < (rule.thresholdTo ?? Number.POSITIVE_INFINITY);
 }
 
+function evidenceWindowLabel(source: OptimizationRule["evidenceSource"]): string {
+  return source.replaceAll("_PLUS_", " + ");
+}
+
 function scoreFor(rule: OptimizationRule, entity: EntityEvidence, all: EntityEvidence[], config: ProjectConfig): number | null {
-  if (rule.scoreSource === "WEIGHTED") return entity.weightedAchievement;
-  if (rule.scoreSource === "CONTEXT_WEIGHTED") return contextWeightedAchievement(entity, all, config);
-  return entity.windows[rule.scoreSource as WindowId]?.achievement ?? null;
+  if (rule.evaluationField === "ACHIEVEMENT") {
+    if (rule.scoreSource === "WEIGHTED") return entity.weightedAchievement;
+    if (rule.scoreSource === "CONTEXT_WEIGHTED") return contextWeightedAchievement(entity, all, config);
+    return entity.windows[rule.scoreSource as WindowId]?.achievement ?? null;
+  }
+  if (rule.scoreSource === "WEIGHTED" || rule.scoreSource === "CONTEXT_WEIGHTED") return null;
+  const window = entity.windows[rule.scoreSource as WindowId];
+  if (!window) return null;
+  if (rule.evaluationField === "METRIC_VALUE") return window.value;
+  if (rule.evaluationField === "SPEND") return window.totals.spend;
+  if (rule.evaluationField === "RESULTS") return window.totals.result;
+  if (rule.evaluationField === "QUALIFIED_RESULTS") return window.totals.qualifiedResult;
+  return window.totals.revenue;
 }
 
 export function ownsBudget(entity: EntityEvidence): boolean {
@@ -88,7 +103,8 @@ export function evaluateEntity(entity: EntityEvidence, all: EntityEvidence[], ru
   const base = {
     entityLevel: entity.entityLevel, entityId: entity.entityId, entityName: entity.entityName,
     campaignId: entity.campaignId, adsetId: entity.adsetId, currentStatus: entity.status, budgetType: entity.budgetType,
-    evidenceWindow: config.windows.map((item) => item.id).join(" + "), currentMetric: todayMetric,
+    evidenceWindow: `Configured: ${config.windows.map((item) => item.id).join(" + ")}`, currentMetric: todayMetric,
+    evaluatedValue: null,
     targetMetric: config.target, weightedAchievement: entity.weightedAchievement,
     contextWeightedAchievement: contextScore, executionPhase: (entity.entityLevel === "AD" ? 1 : entity.entityLevel === "ADSET" ? 2 : 3) as 1 | 2 | 3
   };
@@ -98,7 +114,15 @@ export function evaluateEntity(entity: EntityEvidence, all: EntityEvidence[], ru
   const topPriority = Math.max(...matched.map((item) => item.rule.priority));
   const winners = matched.filter((item) => item.rule.priority === topPriority);
   const actions = new Set(winners.map((item) => item.rule.actionCode));
-  if (actions.size > 1) return { ...base, recommendedAction: "REVIEW_MANUALLY", adjustmentPct: null, reasonCodes: ["CONFLICTING_RULES"], matchedRuleIds: winners.map((item) => item.rule.id), confidence: 0.5 };
+  if (actions.size > 1) return {
+    ...base,
+    evidenceWindow: [...new Set(winners.map((item) => evidenceWindowLabel(item.rule.evidenceSource)))].join(" / "),
+    recommendedAction: "REVIEW_MANUALLY",
+    adjustmentPct: null,
+    reasonCodes: ["CONFLICTING_RULES"],
+    matchedRuleIds: winners.map((item) => item.rule.id),
+    confidence: 0.5
+  };
   let action = winners[0].rule.actionCode;
   let adjustment = winners[0].rule.actionValue;
   const reasons = [`RULE_${winners[0].rule.id}`];
@@ -116,7 +140,8 @@ export function evaluateEntity(entity: EntityEvidence, all: EntityEvidence[], ru
     adjustment = Math.sign(adjustment) * config.maxDailyScalePct; reasons.push("ADJUSTMENT_CAPPED_BY_GUARDRAIL");
   }
   return {
-    ...base, recommendedAction: action, adjustmentPct: adjustment, reasonCodes: reasons,
+    ...base, evidenceWindow: evidenceWindowLabel(winners[0].rule.evidenceSource),
+    evaluatedValue: winners[0].score, recommendedAction: action, adjustmentPct: adjustment, reasonCodes: reasons,
     matchedRuleIds: winners.map((item) => item.rule.id), confidence: confidence(entity, winners[0].rule, definition)
   };
 }
