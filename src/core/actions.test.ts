@@ -6,7 +6,8 @@ const recommendation: Recommendation = {
   entityLevel: "AD", entityId: "A1", entityName: "Ad", campaignId: "C1", adsetId: "AS1",
   currentStatus: "ACTIVE", budgetType: "NONE", recommendedAction: "TURN_OFF", adjustmentPct: null,
   reasonCodes: ["RULE_AD_OFF"], matchedRuleIds: ["AD_OFF"], evidenceWindow: "TODAY + SHORT",
-  currentMetric: 200, targetMetric: 100, weightedAchievement: 0.5, contextWeightedAchievement: 0.6,
+  currentMetric: 200, targetMetric: 100, evaluatedValue: 0.5,
+  weightedAchievement: 0.5, contextWeightedAchievement: 0.6,
   confidence: 0.8, executionPhase: 1
 };
 
@@ -15,6 +16,19 @@ describe("action lifecycle", () => {
     const first = createActionRecords({ recommendations: [recommendation], runId: "R1", runAt: "2026-07-20T08:00:00Z", projectId: "P", ruleSetId: "RULES", ruleVersion: 1, existing: [] });
     const second = createActionRecords({ recommendations: [recommendation], runId: "R2", runAt: "2026-07-20T09:00:00Z", projectId: "P", ruleSetId: "RULES", ruleVersion: 1, existing: [{ actionKey: first[0].actionKey, approvalStatus: "PENDING" }] });
     expect(second).toHaveLength(0);
+  });
+  it("does not recreate a completed action until its evidence changes", () => {
+    const first = createActionRecords({ recommendations: [recommendation], runId: "R1", runAt: "2026-07-20T08:00:00Z", projectId: "P", ruleSetId: "RULES", ruleVersion: 1, existing: [] });
+    const repeated = createActionRecords({
+      recommendations: [recommendation],
+      runId: "R2",
+      runAt: "2026-07-20T10:00:00Z",
+      projectId: "P",
+      ruleSetId: "RULES",
+      ruleVersion: 1,
+      existing: [{ actionKey: first[0].actionKey, approvalStatus: "DONE" }]
+    });
+    expect(repeated).toHaveLength(0);
   });
   it("keeps terminal actions immutable and appends an audit event", () => {
     const action = createActionRecords({ recommendations: [recommendation], runId: "R1", runAt: "2026-07-20T08:00:00Z", projectId: "P", ruleSetId: "RULES", ruleVersion: 1, existing: [] })[0];

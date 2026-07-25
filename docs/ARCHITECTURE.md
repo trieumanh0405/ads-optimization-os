@@ -2,15 +2,45 @@
 
 ## Boundary map
 
-1. **Ingestion** normalizes Meta/connector data into the data contract.
-2. **Metric engine** produces daily entity aggregates and lookback windows.
-3. **Deterministic rule engine** creates explainable recommendations.
-4. **Action workflow** handles approval, execution status and append-only audit.
-5. **AI diagnostics** analyzes supporting metrics but cannot override or execute rules.
+1. **Project configuration** định nghĩa brand, KPI, target, lookback, context weights và guardrails.
+2. **Ingestion** parse CSV và normalize source columns thành canonical facts.
+3. **Metric engine** tổng hợp entity theo các evidence windows.
+4. **Deterministic rule engine** tạo recommendation có thể truy vết.
+5. **Action workflow** quản lý approval, terminal status và append-only audit.
+6. **AI diagnostics** phân tích supporting metrics nhưng không override/execute rule.
 
-The formula source of truth is `src/core`. The earlier spreadsheet and transcript are reference behavior, not runtime dependencies.
+`src/core` là formula source of truth. Spreadsheet cũ và transcript chỉ là reference behavior, không phải runtime dependency.
 
-## Firebase collections
+## Runtime flow
+
+```text
+CSV / connector
+  -> column mapping
+  -> /api/normalize
+  -> canonical FactRow[]
+  -> /api/optimize
+  -> QC + evidence windows
+  -> deterministic recommendations
+  -> Action Queue
+  -> approval + Action Log
+                     \
+                      -> optional AI diagnostics (advisory only)
+```
+
+## Persistence modes
+
+### Browser workspace
+
+- IndexedDB database: `ads-optimization-os`
+- One workspace contains multiple projects/brands.
+- Auto-save is debounced after state changes.
+- Export/Restore uses a versioned JSON envelope.
+- Suitable for immediate use, solo media buyer workflow and functional validation.
+- Data is scoped to that browser profile/device; it is not team synchronization.
+
+### Firebase team backend
+
+Stored APIs are designed for shared operation:
 
 - `organizations/{organizationId}`
 - `projects/{projectId}`
@@ -22,12 +52,29 @@ The formula source of truth is `src/core`. The earlier spreadsheet and transcrip
 - `organizations/{organizationId}/aiProviders/{providerId}`
 - `organizations/{organizationId}/analysisPlaybooks/{playbookId}`
 
-Raw data should be stored outside hot dashboard reads. Generate daily aggregates during ingestion rather than scanning raw documents from the UI.
+Firebase ID tokens must include `organizationId` and a supported `role`. Raw data should stay outside hot dashboard reads; production connectors should upsert daily facts.
 
-## AI trust boundary
+## Data contract
 
-- Provider keys are server-only and encrypted before persistence.
-- Every analysis stores provider, model, playbook IDs/versions, input snapshot hash and output.
-- AI receives the deterministic decision as immutable context.
-- AI output is schema-validated.
-- AI can explain, hypothesize and suggest checks; it cannot execute an ad action.
+Canonical identity and metric fields live in `FactRow`. Brand-specific fields are stored in:
+
+- `metrics: Record<string, number | null>`
+- `dimensions: Record<string, string | null>`
+
+Custom metric operands reference flexible metrics as `metrics.<key>`.
+
+## Trust boundaries
+
+- Browser BYOK requests send a key only to the same-origin serverless route for that request.
+- The direct AI route accepts public HTTPS provider endpoints only and blocks common private/local address ranges.
+- Provider calls time out before the Vercel function limit.
+- Stored Firebase provider keys are encrypted and never returned.
+- AI outputs are Zod-validated and cannot mutate deterministic actions.
+- V1 does not call Meta Marketing API.
+
+## Deployment
+
+- Next.js application and serverless APIs run on Vercel.
+- Browser workspace requires no external database.
+- Firebase is optional until multi-device/team synchronization is enabled.
+- GitHub Actions runs typecheck, tests and production build.

@@ -1,5 +1,5 @@
 import type { EntityLevel, FactRow, MetricDefinition, ProjectConfig } from "./schemas";
-import { achievement, computeMetric, sumFacts, weightedAverage, type MetricTotals } from "./metrics";
+import { achievement, computeMetric, mergeMetricTotals, sumFacts, weightedAverage, type MetricTotals } from "./metrics";
 
 export type WindowId = "TODAY" | "SHORT" | "LONG" | "LIFETIME";
 export type WindowEvidence = { id: WindowId; start: string; endExclusive: string; totals: MetricTotals; value: number | null; achievement: number | null; rowCount: number };
@@ -52,21 +52,25 @@ export function buildEntityEvidence(facts: FactRow[], config: ProjectConfig, def
       projectWeightedAchievement: null
     };
   });
+  const aggregateLevel: EntityLevel = evidence.some((item) => item.entityLevel === "CAMPAIGN")
+    ? "CAMPAIGN"
+    : evidence.some((item) => item.entityLevel === "ADSET")
+      ? "ADSET"
+      : "AD";
   const projectWindowAchievements = new Map<WindowId, number | null>();
   for (const windowConfig of config.windows) {
-    const campaignWindows = evidence.filter((item) => item.entityLevel === "CAMPAIGN").map((item) => item.windows[windowConfig.id]).filter((item): item is WindowEvidence => item !== null);
-    if (!campaignWindows.length) {
+    const aggregateWindows = evidence
+      .filter((item) => item.entityLevel === aggregateLevel)
+      .map((item) => item.windows[windowConfig.id])
+      .filter((item): item is WindowEvidence => item !== null);
+    if (!aggregateWindows.length) {
       projectWindowAchievements.set(windowConfig.id, null);
       continue;
     }
-    const totals = campaignWindows.reduce<MetricTotals>((sum, item) => ({
-      spend: sum.spend + item.totals.spend,
-      result: (sum.result ?? 0) + (item.totals.result ?? 0),
-      qualifiedResult: (sum.qualifiedResult ?? 0) + (item.totals.qualifiedResult ?? 0),
-      revenue: (sum.revenue ?? 0) + (item.totals.revenue ?? 0),
-      impressions: (sum.impressions ?? 0) + (item.totals.impressions ?? 0),
-      clicks: (sum.clicks ?? 0) + (item.totals.clicks ?? 0)
-    }), { spend: 0, result: 0, qualifiedResult: 0, revenue: 0, impressions: 0, clicks: 0 });
+    const totals = aggregateWindows.reduce<MetricTotals>(
+      (sum, item) => mergeMetricTotals(sum, item.totals),
+      { spend: 0, result: null, qualifiedResult: null, revenue: null, impressions: null, clicks: null, metrics: {} }
+    );
     projectWindowAchievements.set(windowConfig.id, achievement(computeMetric(totals, definition), config.target, definition.direction));
   }
   const projectWeightedAchievement = weightedAverage(config.windows.map((item) => ({

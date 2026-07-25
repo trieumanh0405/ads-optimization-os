@@ -26,16 +26,27 @@ export const factRowSchema = z.object({
   revenue: z.number().nonnegative().nullable().default(null),
   impressions: z.number().nonnegative().nullable().default(null),
   clicks: z.number().nonnegative().nullable().default(null),
+  objective: z.string().nullable().default(null),
+  optimizationGoal: z.string().nullable().default(null),
+  learningStatus: z.string().nullable().default(null),
+  postId: z.string().nullable().default(null),
+  metrics: z.record(z.number().nullable()).default({}),
+  dimensions: z.record(z.string().nullable()).default({}),
   sourceUpdatedAt: z.string().datetime({ offset: true }),
   sourceRowKey: z.string().min(1)
 });
+
+export const metricOperandSchema = z.union([
+  z.enum(["spend", "result", "qualifiedResult", "revenue", "impressions", "clicks"]),
+  z.string().regex(/^metrics\.[A-Za-z0-9_-]+$/, "Custom operands must use metrics.<key>")
+]);
 
 export const metricDefinitionSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
   kind: z.enum(["RATIO", "SUM", "RATE"]),
-  numerator: z.enum(["spend", "result", "qualifiedResult", "revenue", "impressions", "clicks"]),
-  denominator: z.enum(["spend", "result", "qualifiedResult", "revenue", "impressions", "clicks"]).nullable(),
+  numerator: metricOperandSchema,
+  denominator: metricOperandSchema.nullable(),
   multiplier: z.number().positive().default(1),
   direction: z.enum(["LOWER_IS_BETTER", "HIGHER_IS_BETTER"]),
   nullWhenDenominatorZero: z.boolean().default(true)
@@ -50,7 +61,14 @@ export const projectConfigSchema = z.object({
   currency: z.string().length(3),
   startDate: z.string().date(),
   primaryMetricKey: z.string().min(1),
+  optimizationEventLabel: z.string().min(1).default("Result"),
   target: z.number().positive(),
+  salesModel: z.enum([
+    "ONLINE_CHECKOUT", "LANDING_PAGE_OFFLINE_CLOSE", "MESSAGING_OFFLINE_CLOSE",
+    "MARKETPLACE", "MIXED", "AWARENESS_ONLY", "OTHER"
+  ]).default("OTHER"),
+  trackingConfidence: z.enum(["HIGH", "MEDIUM", "LOW", "UNKNOWN"]).default("UNKNOWN"),
+  capiStatus: z.enum(["VERIFIED", "PARTIAL", "NOT_CONFIGURED", "NOT_APPLICABLE", "UNKNOWN"]).default("UNKNOWN"),
   ruleSetId: z.string().min(1),
   ruleVersion: z.number().int().positive(),
   dataFreshnessHours: z.number().positive(),
@@ -72,11 +90,16 @@ export const projectConfigSchema = z.object({
 
 export const optimizationRuleSchema = z.object({
   id: z.string().min(1),
+  name: z.string().min(1).optional(),
+  description: z.string().optional(),
   ruleSetId: z.string().min(1),
   version: z.number().int().positive(),
   entityLevel: entityLevelSchema,
   metricKey: z.string().min(1),
   scoreSource: z.enum(["TODAY", "SHORT", "LONG", "LIFETIME", "WEIGHTED", "CONTEXT_WEIGHTED"]),
+  evaluationField: z.enum([
+    "ACHIEVEMENT", "METRIC_VALUE", "SPEND", "RESULTS", "QUALIFIED_RESULTS", "REVENUE"
+  ]).default("ACHIEVEMENT"),
   evidenceSource: z.enum(["TODAY", "SHORT", "LONG", "LIFETIME", "TODAY_PLUS_SHORT", "TODAY_PLUS_LONG"]).default("SHORT"),
   minSpendAbsolute: z.number().nonnegative().nullable().default(null),
   minSpendTargetMultiple: z.number().nonnegative().nullable().default(null),

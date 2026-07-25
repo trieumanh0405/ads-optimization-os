@@ -54,4 +54,50 @@ describe("production optimization engine", () => {
     const output = runOptimizationEngine({ ...base, facts: [row("2026-07-20", 500, 0), row("2026-07-19", 500, 0)] });
     expect(output.recommendations[0].recommendedAction).toBe("PENDING_DATA");
   });
+  it("can stop a zero-result entity after the configured spend threshold", () => {
+    const noResultRule = {
+      id: "AD_ZERO_RESULT",
+      ruleSetId: "LEAD",
+      version: 1,
+      entityLevel: "AD" as const,
+      metricKey: "CPL",
+      scoreSource: "TODAY" as const,
+      evaluationField: "RESULTS" as const,
+      evidenceSource: "TODAY" as const,
+      minSpendAbsolute: null,
+      minSpendTargetMultiple: 1.5,
+      minResults: 0,
+      operator: "LTE" as const,
+      thresholdFrom: 0,
+      thresholdTo: null,
+      actionCode: "TURN_OFF" as const,
+      actionValue: null,
+      priority: 200,
+      enabled: true
+    };
+    const output = runOptimizationEngine({
+      ...base,
+      rules: [noResultRule],
+      facts: [row("2026-07-20", 160, 0)]
+    });
+    expect(output.recommendations[0].recommendedAction).toBe("TURN_OFF");
+    expect(output.recommendations[0].evaluatedValue).toBe(0);
+    expect(output.recommendations[0].evidenceWindow).toBe("TODAY");
+  });
+  it("uses the lowest available entity level for project context", () => {
+    const output = runOptimizationEngine({
+      ...base,
+      config: {
+        ...base.config,
+        contextWeights: {
+          CAMPAIGN: { entity: 0.7, context: 0.3 },
+          ADSET: { entity: 0.65, context: 0.35 },
+          AD: { entity: 0.65, context: 0.35 }
+        }
+      },
+      facts: [row("2026-07-20", 500, 2), row("2026-07-19", 400, 2), row("2026-07-18", 400, 2)]
+    });
+    expect(output.evidence[0].projectWeightedAchievement).not.toBeNull();
+    expect(output.recommendations[0].recommendedAction).toBe("TURN_OFF");
+  });
 });

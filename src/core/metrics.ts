@@ -1,28 +1,56 @@
 import type { FactRow, MetricDefinition } from "./schemas";
 
-export type MetricTotals = Pick<FactRow, "spend" | "result" | "qualifiedResult" | "revenue" | "impressions" | "clicks">;
+export type MetricTotals = Pick<FactRow, "spend" | "result" | "qualifiedResult" | "revenue" | "impressions" | "clicks">
+  & { metrics: Record<string, number | null> };
 
 const zeroTotals = (): MetricTotals => ({
-  spend: 0, result: 0, qualifiedResult: 0, revenue: 0, impressions: 0, clicks: 0
+  spend: 0, result: null, qualifiedResult: null, revenue: null, impressions: null, clicks: null, metrics: {}
 });
 
+function addNullable(left: number | null, right: number | null): number | null {
+  if (left === null && right === null) return null;
+  return (left ?? 0) + (right ?? 0);
+}
+
+export function mergeMetricTotals(left: MetricTotals, right: MetricTotals): MetricTotals {
+  const keys = new Set([...Object.keys(left.metrics), ...Object.keys(right.metrics)]);
+  return {
+    spend: left.spend + right.spend,
+    result: addNullable(left.result, right.result),
+    qualifiedResult: addNullable(left.qualifiedResult, right.qualifiedResult),
+    revenue: addNullable(left.revenue, right.revenue),
+    impressions: addNullable(left.impressions, right.impressions),
+    clicks: addNullable(left.clicks, right.clicks),
+    metrics: Object.fromEntries([...keys].map((key) => [
+      key,
+      addNullable(left.metrics[key] ?? null, right.metrics[key] ?? null)
+    ]))
+  };
+}
+
 export function sumFacts(facts: FactRow[]): MetricTotals {
-  return facts.reduce((total, row) => ({
-    spend: total.spend + row.spend,
-    result: (total.result ?? 0) + (row.result ?? 0),
-    qualifiedResult: (total.qualifiedResult ?? 0) + (row.qualifiedResult ?? 0),
-    revenue: (total.revenue ?? 0) + (row.revenue ?? 0),
-    impressions: (total.impressions ?? 0) + (row.impressions ?? 0),
-    clicks: (total.clicks ?? 0) + (row.clicks ?? 0)
+  return facts.reduce((total, row) => mergeMetricTotals(total, {
+    spend: row.spend,
+    result: row.result,
+    qualifiedResult: row.qualifiedResult,
+    revenue: row.revenue,
+    impressions: row.impressions,
+    clicks: row.clicks,
+    metrics: row.metrics
   }), zeroTotals());
 }
 
+function metricOperand(totals: MetricTotals, operand: MetricDefinition["numerator"]): number | null {
+  if (operand.startsWith("metrics.")) return totals.metrics[operand.slice("metrics.".length)] ?? null;
+  return totals[operand as keyof Pick<MetricTotals, "spend" | "result" | "qualifiedResult" | "revenue" | "impressions" | "clicks">];
+}
+
 export function computeMetric(totals: MetricTotals, definition: MetricDefinition): number | null {
-  const numerator = totals[definition.numerator];
+  const numerator = metricOperand(totals, definition.numerator);
   if (numerator === null) return null;
   if (definition.kind === "SUM") return numerator;
   if (!definition.denominator) return null;
-  const denominator = totals[definition.denominator];
+  const denominator = metricOperand(totals, definition.denominator);
   if (denominator === null || denominator === 0) return definition.nullWhenDenominatorZero ? null : 0;
   return (numerator / denominator) * definition.multiplier;
 }

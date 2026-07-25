@@ -22,11 +22,14 @@ Metrics are records, not hard-coded conditionals:
 - `CPQL = spend / qualifiedResult`
 - `CPA = spend / result`
 - `ROAS = revenue / spend`
-- `CTR = clicks / impressions`
+- `CTR (%) = clicks / impressions × 100`
 - `CPC = spend / clicks`
-- `CVR = result / clicks`
+- `CVR (%) = result / clicks × 100`
+- `CPM = spend / impressions × 1,000`
 
 If the denominator is zero or absent, the metric is `null`.
+
+Custom metric definitions can use canonical fields or a mapped operand such as `metrics.bookedAppointment`.
 
 Achievement always uses “higher is better” orientation:
 
@@ -58,12 +61,12 @@ Both weights must sum to 1 for every entity level.
 
 ## Rule evaluation
 
-Rules independently select a score source (`TODAY`, `SHORT`, `LONG`, `LIFETIME`, `WEIGHTED`, `CONTEXT_WEIGHTED`) and an evidence source (`TODAY`, `SHORT`, `LONG`, `LIFETIME`, `TODAY_PLUS_SHORT`, `TODAY_PLUS_LONG`). This avoids hiding a hard-coded evidence window inside weighted formulas.
+Rules independently select a score source (`TODAY`, `SHORT`, `LONG`, `LIFETIME`, `WEIGHTED`, `CONTEXT_WEIGHTED`), evaluation field (`ACHIEVEMENT`, `METRIC_VALUE`, `SPEND`, `RESULTS`, `QUALIFIED_RESULTS`, `REVENUE`) and evidence source (`TODAY`, `SHORT`, `LONG`, `LIFETIME`, `TODAY_PLUS_SHORT`, `TODAY_PLUS_LONG`). This avoids hiding a hard-coded evidence window inside weighted formulas and lets zero-result spend rules run even when CPL/CPA is null.
 
 1. Block stale/invalid data.
 2. Remove rules from other sets/versions/entity levels/metrics.
-3. Require minimum spend and result evidence.
-4. Match thresholds against normalized achievement.
+3. Require minimum spend and result evidence configured by the rule.
+4. Match thresholds against the selected evaluation field.
 5. Choose the highest numeric priority.
 6. If top-priority rules produce different actions, return `REVIEW_MANUALLY`.
 7. Apply budget ownership and scale guardrails.
@@ -82,7 +85,7 @@ Empty data, stale refresh, duplicate source keys, missing entity IDs, project mi
 
 ## Action lifecycle
 
-Action fingerprints include entity, action, evidence and rule IDs. An already-open equivalent action is not duplicated. Valid transitions:
+Action fingerprints include entity, action, evidence and rule IDs. An equivalent action is not duplicated in later runs while the evidence hash is unchanged, including when the previous action is terminal. Changed evidence produces a new action. Valid transitions:
 
 - `PENDING → DONE | REJECTED | DEFERRED`
 - `DEFERRED → PENDING | DONE | REJECTED`

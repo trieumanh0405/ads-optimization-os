@@ -13,7 +13,13 @@ export const projectBundleSchema = z.object({
   mappings: z.array(z.object({
     canonicalField: canonicalFieldSchema, sourceColumn: z.string().min(1),
     required: z.boolean(), defaultValue: z.unknown().optional()
-  })).min(1)
+  })).min(1),
+  metricMappings: z.array(z.object({
+    metricKey: z.string().min(1), sourceColumn: z.string().min(1)
+  })).default([]),
+  dimensionMappings: z.array(z.object({
+    dimensionKey: z.string().min(1), sourceColumn: z.string().min(1)
+  })).default([])
 });
 export type ProjectBundle = z.infer<typeof projectBundleSchema>;
 
@@ -64,7 +70,9 @@ export async function importProjectRows(input: {
   const normalized = normalizeRows(input.rows, {
     projectId: bundle.config.projectId, platform: bundle.config.platform,
     accountId: bundle.config.accountId,
-    mappings: bundle.mappings
+    mappings: bundle.mappings,
+    metricMappings: bundle.metricMappings,
+    dimensionMappings: bundle.dimensionMappings
   });
   if (input.mode === "STRICT" && normalized.errors.length) return { imported: 0, errors: normalized.errors, status: "REJECTED" as const };
   for (let index = 0; index < normalized.facts.length; index += 450) {
@@ -83,8 +91,7 @@ export async function runStoredProject(input: {
   const bundle = await getProjectBundle(input.projectId, input.organizationId);
   const factsSnapshot = await projectRef(input.projectId).collection("facts")
     .where("date", ">=", bundle.config.startDate).where("date", "<=", input.asOfDate).get();
-  const actionsSnapshot = await projectRef(input.projectId).collection("actionQueue")
-    .where("approvalStatus", "in", ["PENDING", "DEFERRED"]).get();
+  const actionsSnapshot = await projectRef(input.projectId).collection("actionQueue").get();
   const output = runOptimizationEngine({
     asOfDate: input.asOfDate, runAt: input.runAt, config: bundle.config,
     metricDefinitions: bundle.metricDefinitions, rules: bundle.rules,
