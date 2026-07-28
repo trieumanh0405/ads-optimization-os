@@ -38,7 +38,7 @@ CSV / connector
 - Suitable for immediate use, solo media buyer workflow and functional validation.
 - Data is scoped to that browser profile/device; it is not team synchronization.
 
-### Firebase team backend
+### Supabase team backend
 
 Stored APIs are designed for shared operation:
 
@@ -52,7 +52,7 @@ Stored APIs are designed for shared operation:
 - `organizations/{organizationId}/aiProviders/{providerId}`
 - `organizations/{organizationId}/analysisPlaybooks/{playbookId}`
 
-Firebase ID tokens must include `organizationId` and a supported `role`. Raw data should stay outside hot dashboard reads; production connectors should upsert daily facts.
+Supabase Auth sessions authenticate users. Organization roles and project capabilities live in PostgreSQL; server APIs enforce them even though their service-role client bypasses RLS. Raw data should stay outside hot dashboard reads; production connectors upsert canonical daily facts.
 
 ## Data contract
 
@@ -68,7 +68,7 @@ Custom metric operands reference flexible metrics as `metrics.<key>`.
 - Browser BYOK requests send a key only to the same-origin serverless route for that request.
 - The direct AI route accepts public HTTPS provider endpoints only and blocks common private/local address ranges.
 - Provider calls time out before the Vercel function limit.
-- Stored Firebase provider keys are encrypted and never returned.
+- Stored Supabase provider keys are encrypted and never returned.
 - AI outputs are Zod-validated and cannot mutate deterministic actions.
 - V1 does not call Meta Marketing API.
 
@@ -76,5 +76,5 @@ Custom metric operands reference flexible metrics as `metrics.<key>`.
 
 - Next.js application and serverless APIs run on Vercel.
 - Browser workspace requires no external database.
-- Firebase is optional until multi-device/team synchronization is enabled.
+- Supabase activates when the three Supabase environment variables are configured.
 - GitHub Actions runs typecheck, tests and production build.

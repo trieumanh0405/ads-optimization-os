@@ -8,6 +8,6 @@ export async function POST(request: Request, context: { params: Promise<{ projec
   try {
     const user = await requireUser(request, ["admin", "leader", "buyer"]);
     const { projectId } = await context.params; const body = schema.parse(await request.json());
-    return NextResponse.json(await runStoredProject({ projectId, organizationId: user.organizationId, ...body }));
+    return NextResponse.json(await runStoredProject({ projectId, user, ...body }));
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 400 }); }
 }

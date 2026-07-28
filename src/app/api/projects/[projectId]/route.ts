@@ -6,6 +6,6 @@ export async function GET(request: Request, context: { params: Promise<{ project
   try {
     const user = await requireUser(request);
     const { projectId } = await context.params;
-    return NextResponse.json(await getProjectBundle(projectId, user.organizationId));
+    return NextResponse.json(await getProjectBundle(projectId, user));
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 404 }); }
 }
