@@ -14,6 +14,9 @@ import { standardMetricLibrary } from "@/core/library";
 import { createProject, EMPTY_WORKSPACE, slugify } from "@/product/defaults";
 import { apiJson, downloadText } from "@/product/api";
 import { exportWorkspace, importWorkspace, loadWorkspace, saveWorkspace } from "@/product/persistence";
+import type { TeamApi } from "@/product/team-api";
+import { createTeamApi } from "@/product/team-api";
+import { isSupabaseBrowserConfigured, supabaseBrowser } from "@/product/supabase-browser";
 import type {
   LocalProject, OptimizationRun, ProjectCreateInput, WorkspaceState, WorkspaceView
 } from "@/product/types";
@@ -110,7 +113,78 @@ function upsertProject(state: WorkspaceState, project: LocalProject): WorkspaceS
   };
 }
 
+type TeamIdentity = { api: TeamApi; email: string; role: string };
+
 export function WorkspaceApp() {
+  return isSupabaseBrowserConfigured() ? <SupabaseTeamEntry /> : <WorkspaceShell />;
+}
+
+function SupabaseTeamEntry() {
+  const [state, setState] = useState<"loading" | "signed-out" | "onboarding" | "ready" | "error">("loading");
+  const [email, setEmail] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
+  const [message, setMessage] = useState("");
+  const [identity, setIdentity] = useState<TeamIdentity | null>(null);
+
+  async function resolveSession() {
+    const { data } = await supabaseBrowser().auth.getSession();
+    const session = data.session;
+    if (!session) { setIdentity(null); setState("signed-out"); return; }
+    try {
+      const tentativeApi = createTeamApi(session.access_token, "");
+      const response = await tentativeApi<{ user: { organizationId: string; role: string } }>("/api/me");
+      setIdentity({ api: createTeamApi(session.access_token, response.user.organizationId), email: session.user.email ?? "", role: response.user.role });
+      setState("ready");
+    } catch (error) {
+      setIdentity(null);
+      setState(error instanceof Error && error.message.includes("MEMBERSHIP_REQUIRED") ? "onboarding" : "error");
+      setMessage(error instanceof Error ? error.message : "Không thể kết nối Supabase.");
+    }
+  }
+
+  useEffect(() => {
+    resolveSession();
+    const { data: listener } = supabaseBrowser().auth.onAuthStateChange(() => { void resolveSession(); });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  async function sendMagicLink(event: React.FormEvent) {
+    event.preventDefault(); setMessage("");
+    const { error } = await supabaseBrowser().auth.signInWithOtp({
+      email, options: { emailRedirectTo: window.location.origin }
+    });
+    setMessage(error ? error.message : "Đã gửi link đăng nhập. Mở email và quay lại tool này.");
+  }
+
+  async function createOrganization(event: React.FormEvent) {
+    event.preventDefault(); setMessage("");
+    const { data } = await supabaseBrowser().auth.getSession();
+    if (!data.session) return setState("signed-out");
+    try {
+      const api = createTeamApi(data.session.access_token, "");
+      await api("/api/onboarding", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ organizationName })
+      });
+      await resolveSession();
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Không thể tạo organization."); }
+  }
+
+  if (state === "ready" && identity) return <WorkspaceShell team={identity} />;
+  if (state === "loading") return <main className="loadingScreen"><RefreshCw className="spin" /><strong>Đang kết nối team workspace…</strong></main>;
+  if (state === "onboarding") return (
+    <main className="loadingScreen"><section className="sectionCard authCard"><h1>Tạo team workspace</h1><p>Tài khoản này chưa thuộc organization nào. Người tạo đầu tiên sẽ là admin.</p>
+      <form onSubmit={createOrganization}><input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder="Tên agency / team" required minLength={2} /><button className="primaryAction" type="submit">Tạo organization</button></form>
+      {message && <small>{message}</small>}</section></main>
+  );
+  return (
+    <main className="loadingScreen"><section className="sectionCard authCard"><h1>Đăng nhập team workspace</h1><p>Dùng email đã được cấp quyền. Tool gửi magic link, không lưu mật khẩu tại đây.</p>
+      <form onSubmit={sendMagicLink}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@agency.com" required /><button className="primaryAction" type="submit">Gửi link đăng nhập</button></form>
+      {message && <small>{message}</small>}</section></main>
+  );
+}
+
+function WorkspaceShell({ team }: { team?: TeamIdentity }) {
   const [workspace, setWorkspace] = useState<WorkspaceState>(structuredClone(EMPTY_WORKSPACE));
   const [hydrated, setHydrated] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -118,17 +192,33 @@ export function WorkspaceApp() {
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const importWorkspaceInput = useRef<HTMLInputElement>(null);
+  const teamSyncTimers = useRef(new Map<string, number>());
 
   useEffect(() => {
-    loadWorkspace().then((state) => {
+    let cancelled = false;
+    void (async () => {
+      const state = await loadWorkspace();
+      let projects = state.projects;
+      if (team) {
+        const listed = await team.api<{ projects: Array<{ projectId: string }> }>("/api/projects");
+        projects = await Promise.all(listed.projects.map(async ({ projectId }) => {
+          const result = await team.api<{ project: LocalProject }>(`/api/projects/${encodeURIComponent(projectId)}/workspace`);
+          return result.project;
+        }));
+      }
+      if (cancelled) return;
       const hash = window.location.hash.replace("#", "").toUpperCase() as WorkspaceView;
       setWorkspace({
-        ...state,
+        ...state, projects, activeProjectId: projects.some((item) => item.config.projectId === state.activeProjectId)
+          ? state.activeProjectId : projects[0]?.config.projectId ?? null,
         activeView: hash in viewMeta ? hash : state.activeView
       });
       setHydrated(true);
+    })().catch((error) => {
+      if (!cancelled) { notify(error instanceof Error ? error.message : "TEAM_WORKSPACE_LOAD_FAILED", "error"); setHydrated(true); }
     });
-  }, []);
+    return () => { cancelled = true; };
+  }, [team]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -156,8 +246,29 @@ export function WorkspaceApp() {
     setMobileNav(false);
   }
 
-  function updateProject(nextProject: LocalProject) {
+  function updateProject(nextProject: LocalProject, options?: { syncConfig?: boolean }) {
     setWorkspace((current) => upsertProject(current, nextProject));
+    if (options?.syncConfig !== false) queueTeamBundle(nextProject);
+  }
+
+  function queueTeamBundle(nextProject: LocalProject, immediately = false) {
+    if (!team) return;
+    const currentTimer = teamSyncTimers.current.get(nextProject.config.projectId);
+    if (currentTimer) window.clearTimeout(currentTimer);
+    const sync = async () => {
+      try {
+        await team.api("/api/projects", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            config: nextProject.config, metricDefinitions: nextProject.metricDefinitions,
+            rules: nextProject.rules, mappings: nextProject.mappings,
+            metricMappings: nextProject.metricMappings, dimensionMappings: nextProject.dimensionMappings
+          })
+        });
+      } catch (error) { notify(error instanceof Error ? error.message : "TEAM_PROJECT_SYNC_FAILED", "error"); }
+    };
+    if (immediately) void sync();
+    else teamSyncTimers.current.set(nextProject.config.projectId, window.setTimeout(() => { void sync(); }, 800));
   }
 
   function createNewProject() {
@@ -174,6 +285,7 @@ export function WorkspaceApp() {
     setCreateInput(defaultCreateInput());
     setShowCreate(false);
     window.history.replaceState(null, "", "#project_setup");
+    queueTeamBundle(next, true);
     notify("Đã tạo project và bộ rule mặc định.");
   }
 
@@ -321,16 +433,16 @@ export function WorkspaceApp() {
             <ProjectSetupView key={project.config.projectId} project={project} onUpdate={updateProject} onDelete={deleteProject} notify={notify} />
           )}
           {project && workspace.activeView === "DATA_IMPORT" && (
-            <DataImporter key={project.config.projectId} project={project} onUpdate={updateProject} notify={notify} />
+            <DataImporter key={project.config.projectId} project={project} onUpdate={updateProject} notify={notify} teamApi={team?.api} />
           )}
           {project && workspace.activeView === "RULES" && (
             <RuleManager key={project.config.projectId} project={project} onUpdate={updateProject} notify={notify} />
           )}
           {project && workspace.activeView === "DECISIONS" && (
-            <DecisionBoard key={project.config.projectId} project={project} onUpdate={updateProject} notify={notify} />
+            <DecisionBoard key={project.config.projectId} project={project} onUpdate={updateProject} notify={notify} teamApi={team?.api} />
           )}
           {project && workspace.activeView === "ACTIONS" && (
-            <ActionQueue key={project.config.projectId} project={project} operatorName={workspace.operatorName} onUpdate={updateProject} notify={notify} />
+            <ActionQueue key={project.config.projectId} project={project} operatorName={workspace.operatorName} onUpdate={updateProject} notify={notify} teamApi={team?.api} />
           )}
           {project && workspace.activeView === "AI" && (
             <AiAnalysisPanel
@@ -590,7 +702,7 @@ function ProjectSetupView({
   notify
 }: {
   project: LocalProject;
-  onUpdate: (project: LocalProject) => void;
+  onUpdate: (project: LocalProject, options?: { syncConfig?: boolean }) => void;
   onDelete: () => void;
   notify: (message: string, tone?: "success" | "error") => void;
 }) {
@@ -836,11 +948,13 @@ function ProjectSetupView({
 function DecisionBoard({
   project,
   onUpdate,
-  notify
+  notify,
+  teamApi
 }: {
   project: LocalProject;
-  onUpdate: (project: LocalProject) => void;
+  onUpdate: (project: LocalProject, options?: { syncConfig?: boolean }) => void;
   notify: (message: string, tone?: "success" | "error") => void;
+  teamApi?: TeamApi;
 }) {
   const [asOfDate, setAsOfDate] = useState(new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
@@ -862,7 +976,11 @@ function DecisionBoard({
     setBusy(true);
     try {
       const runAt = new Date().toISOString();
-      const output = await apiJson<OptimizationRun>("/api/optimize", {
+      const output = teamApi ? await teamApi<OptimizationRun>(`/api/projects/${encodeURIComponent(project.config.projectId)}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ asOfDate, runAt })
+      }) : await apiJson<OptimizationRun>("/api/optimize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -886,7 +1004,7 @@ function DecisionBoard({
         runs: [output, ...project.runs].slice(0, 60),
         actions: [...newActions, ...project.actions],
         updatedAt: runAt
-      });
+      }, { syncConfig: false });
       if (output.status === "BLOCKED") notify(`Run bị chặn: ${output.qc.issues.map((item) => item.code).join(", ")}`, "error");
       else notify(`Engine hoàn tất: ${output.recommendations.length} decision · ${newActions.length} action mới.`);
     } catch (error) {
@@ -1005,12 +1123,14 @@ function ActionQueue({
   project,
   operatorName,
   onUpdate,
-  notify
+  notify,
+  teamApi
 }: {
   project: LocalProject;
   operatorName: string;
-  onUpdate: (project: LocalProject) => void;
+  onUpdate: (project: LocalProject, options?: { syncConfig?: boolean }) => void;
   notify: (message: string, tone?: "success" | "error") => void;
+  teamApi?: TeamApi;
 }) {
   const [status, setStatus] = useState<"ALL" | ApprovalStatus>("PENDING");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1023,7 +1143,7 @@ function ActionQueue({
     setNote(action.note ?? "");
   }
 
-  function transition(to: ApprovalStatus) {
+  async function transition(to: ApprovalStatus) {
     if (!selected) return;
     const valid: Record<ApprovalStatus, ApprovalStatus[]> = {
       PENDING: ["DONE", "REJECTED", "DEFERRED"],
@@ -1043,6 +1163,16 @@ function ActionQueue({
       to,
       note: note || null
     };
+    if (teamApi) {
+      try {
+        await teamApi(`/api/projects/${encodeURIComponent(project.config.projectId)}/actions/${encodeURIComponent(selected.id)}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to, at, note: note || null })
+        });
+      } catch (error) {
+        return notify(error instanceof Error ? error.message : "ACTION_UPDATE_FAILED", "error");
+      }
+    }
     onUpdate({
       ...project,
       actions: project.actions.map((item) => item.id === selected.id ? {
@@ -1054,7 +1184,7 @@ function ActionQueue({
       } : item),
       actionLog: [event, ...project.actionLog],
       updatedAt: at
-    });
+    }, { syncConfig: false });
     setSelectedId(null);
     notify(`Action đã chuyển sang ${to}.`);
   }

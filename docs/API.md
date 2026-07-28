@@ -1,6 +1,6 @@
 # API contracts
 
-Stored-project routes and stored AI configuration routes require a Firebase ID token with `organizationId` and `role` custom claims. Stateless routes and browser BYOK analysis do not require Firebase.
+Stored-project routes and stored AI configuration routes require a Supabase access token in `Authorization: Bearer <token>`. If a user belongs to multiple organizations, send `x-organization-id`. Stateless routes and browser BYOK analysis do not require Supabase.
 
 ## Health
 

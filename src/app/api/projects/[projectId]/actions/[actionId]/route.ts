@@ -11,6 +11,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
   try {
     const user = await requireUser(request, ["admin", "leader", "buyer", "reviewer"]);
     const { projectId, actionId } = await context.params; const body = schema.parse(await request.json());
-    return NextResponse.json(await updateStoredAction({ projectId, actionId, organizationId: user.organizationId, actor: user.uid, ...body }));
+    return NextResponse.json(await updateStoredAction({ projectId, actionId, user, actor: user.uid, ...body }));
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 400 }); }
 }

@@ -6,7 +6,7 @@
 4. Keep brand-specific field logic in mapping/config, not hard-coded by project name.
 5. Add AI providers behind `AiProvider`.
 6. Version playbooks whenever analysis instructions change.
-7. Never commit API keys, Firebase credentials, customer exports or workspace backups.
+7. Never commit API keys, Supabase service-role credentials, customer exports or workspace backups.
 8. Preserve append-only audit semantics and terminal action statuses.
 9. Update PRD/API docs when a contract changes.
 10. Run `pnpm typecheck`, `pnpm test` and `pnpm build` before opening a PR.

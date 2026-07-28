@@ -1,95 +1,58 @@
 # Ads Optimization OS
 
-Ứng dụng nội bộ giúp media buyer chuẩn hóa dữ liệu, chạy rule chung theo KPI của từng brand và tạo Action Queue có giải thích/audit. Đây là tool vận hành thật; màn hình mặc định không chứa sample data.
+An internal decision-support tool for trained media buyers. It normalizes advertising data, evaluates project-specific deterministic rules, and produces an auditable Action Queue. It does not execute Meta Ads changes in V1.
 
-> Rule engine deterministic là nguồn tạo action. AI chỉ phân tích supporting metrics, nêu giả thuyết và đề xuất bước kiểm tra; AI không thay đổi action và không gọi Meta Ads API trong v1.
+## What works
 
-## Luồng sử dụng đã hoạt động
+- Multi-brand project configuration, KPI dictionary, custom metrics and mapping.
+- CSV validation and normalization with Strict and Partial modes.
+- Deterministic Campaign, Ad set and Ad rule engine with lookback windows, conflict detection, CBO/ABO ownership and scale guardrails.
+- Action Queue with PENDING, DONE, REJECTED and DEFERRED lifecycle plus append-only audit log.
+- Optional multi-provider AI diagnostics. AI is advisory and cannot override deterministic actions.
+- Supabase team workspace: Supabase Auth, PostgreSQL, Row Level Security and project-level permissions.
 
-1. Tạo project/brand, chọn platform, KPI, target, result definition và sales model.
-2. Import CSV thật từ Ads Manager/connector.
-3. Auto-map hoặc chỉnh tay data contract, supporting metrics và context dimensions.
-4. Chọn Strict/Partial import; xem lỗi theo dòng trước khi lưu.
-5. Chỉnh lookback, weights, CBO/ABO guardrails và rule records.
-6. Chạy engine theo Today, Short, Long, Lifetime và parent/project context.
-7. Xem đề xuất ở Campaign, Ad set, Ad cùng rule, evidence, metric, target và confidence.
-8. Review action, chuyển `DONE`, `REJECTED`, `DEFERRED` và giữ append-only audit log.
-9. Dùng OpenAI, OpenRouter, Anthropic, Gemini hoặc endpoint tương thích để phân tích bổ sung bằng playbook Noti/Panasonic.
-
-## Persistence
-
-Ứng dụng có hai lane rõ ràng:
-
-- **Browser workspace — dùng ngay:** IndexedDB lưu project, mapping, fact rows, rules, runs, actions và AI analysis trong browser hiện tại. Có Export/Restore JSON để backup hoặc chuyển máy. API key AI chỉ được giữ trong session nếu người dùng chọn.
-- **Team backend — tùy chọn:** các API Firebase/Firestore có sẵn cho project, import, run, action và encrypted provider keys. Lane này cần Firebase credentials và custom claims; giao diện browser hiện không tự bật team sync khi chưa cấu hình.
-
-Không lưu customer data hoặc API key vào Git. Với production nhiều người dùng, cấu hình Firebase/Auth trước khi coi browser workspace là nguồn dữ liệu dùng chung.
-
-## KPI và metric
-
-Metric chuẩn:
-
-- CPL, CPQL, CPA, ROAS
-- CTR (%), CPC, CVR (%), CPM
-
-Mỗi project có thể thêm KPI riêng từ field chuẩn hoặc supporting metric đã map, ví dụ:
+## Data architecture
 
 ```text
-CPBOOKING = spend / metrics.bookedAppointment
+Google Sheets / CSV / future BigQuery
+  -> mapping + normalization
+  -> canonical facts in Supabase
+  -> deterministic rule engine
+  -> action_queue + immutable action_log
 ```
 
-Metric thiếu giữ nguyên `null`; không bị đổi thành `0`. `result` có thể là Lead, Message, Purchase, Booking… tùy mapping của project.
+Keep wide raw exports in Google Sheets/Drive initially. Only normalized facts and metrics needed by the engine belong in the operational database.
 
-## Rule engine
+## Team authorization
 
-Rule là record có version, không phải chuỗi `IF` trong UI:
+- `admin` and `leader`: see all projects in the organization.
+- `buyer` and `reviewer`: see only projects assigned through `project_members`.
+- Per-project capabilities: import, run, edit config, edit rules and review actions.
+- The server validates access on every stored API route; hiding a UI button is never treated as authorization.
 
-```text
-rule_id, entity_level, metric_key, score_source, evaluation_field,
-evidence_source, min_spend, min_results, operator, thresholds,
-action_code, action_value, priority, enabled
-```
+## Local development
 
-Engine hỗ trợ:
-
-- Achievement luôn chuẩn hóa về “cao hơn là tốt”.
-- Rule dùng achievement, metric value, spend, result, qualified result hoặc revenue.
-- Zero-result rule vẫn chạy được sau minimum spend dù CPA/CPL hiện tại là `null`.
-- Conflict cùng priority trả `REVIEW_MANUALLY`.
-- Campaign chỉ scale budget CBO; Ad set chỉ scale budget ABO; Ad không sở hữu budget.
-- Dữ liệu stale/invalid chặn destructive recommendation.
-- Action có cùng evidence hash không bị tạo lại, kể cả action cũ đã terminal.
-
-Chi tiết tại [Core engine specification](docs/CORE_ENGINE.md).
-
-## AI diagnostics
-
-Provider hỗ trợ:
-
-- OpenAI-compatible (OpenAI, OpenRouter, gateway hoặc endpoint HTTPS công khai)
-- Anthropic
-- Google Gemini
-
-Playbook tích hợp:
-
-- Noti Meta performance diagnosis
-- Noti content, funnel & creative
-- Panasonic Vietnam case guardrails
-
-Các skill được chuyển thành playbook có version, required/optional metrics, missing-data behavior và prohibited actions. Không copy số liệu Panasonic thành benchmark cho brand khác. Xem [AI playbooks](docs/PLAYBOOKS.md).
-
-## Chạy local
-
-Yêu cầu Node.js 20+ và pnpm.
+Node.js 20+ and pnpm are required.
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Browser workspace không cần `.env`. Để bật Firebase APIs, copy `.env.example` thành `.env.local` và điền credentials.
+Browser-only mode works without an `.env.local` file and saves to IndexedDB. It is suitable for private/offline work and has JSON Export/Restore.
 
-Kiểm tra trước khi commit:
+## Supabase deployment
+
+Follow [Supabase deployment setup](docs/SUPABASE_SETUP.md). In short:
+
+1. Run `supabase/migrations/202607280001_initial_ads_optimization.sql` in the linked Supabase project.
+2. Enable Supabase Email magic-link authentication and set Vercel redirect URLs.
+3. Add the Supabase environment variables to Vercel.
+4. Deploy and sign in; the first authenticated user creates the organization and becomes admin.
+
+Never expose `SUPABASE_SERVICE_ROLE_KEY` or provider API keys to the browser or commit them to Git.
+
+## Validation
 
 ```bash
 pnpm typecheck
@@ -97,36 +60,29 @@ pnpm test
 pnpm build
 ```
 
-Fixture E2E không được load vào sản phẩm: `test-fixtures/e2e-lead-ads.csv`.
+If pnpm blocks build scripts on a new machine, run `pnpm approve-builds` and approve `esbuild` and `sharp` before building Next.js.
 
-## Cấu trúc repository
+## Repository map
 
 ```text
 src/
-  ai/          provider adapters, contracts, versioned playbooks
-  app/         Next.js UI, styles and API routes
-  components/  operational product screens
-  core/        data contract, formulas, windows, QC, rules, actions
-  product/     local workspace defaults, mapping and persistence
-  server/      Firebase authorization, repositories and encryption
+  ai/          provider adapters and versioned analysis playbooks
+  app/         Next.js pages and API routes
+  components/  operator UI
+  core/        formulas, QC, rules and action lifecycle
+  product/     browser workspace, Supabase browser client and UI utilities
+  server/      Supabase authorization, persistence and encrypted secrets
+supabase/
+  migrations/  PostgreSQL schema and RLS policies
 docs/
-  PRD.md
-  ARCHITECTURE.md
-  CORE_ENGINE.md
-  API.md
-  PLAYBOOKS.md
-  CONTRIBUTING.md
+  PRD.md, ARCHITECTURE.md, API.md, SUPABASE_SETUP.md
 ```
 
-## Tài liệu
+## Useful endpoints
 
-- [PRD và acceptance criteria](docs/PRD.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [API contracts](docs/API.md)
-- [Contributing](docs/CONTRIBUTING.md)
-
-## Deploy Vercel
-
-Import repository vào Vercel hoặc dùng Vercel CLI. Browser workspace chạy không cần service trả phí. Nếu dùng Firebase team backend, thêm Firebase env vars và production domain vào Firebase Authentication authorized domains.
-
-Endpoint kiểm tra: `GET /api/health`.
+- `GET /api/health`
+- `GET|POST /api/projects`
+- `GET /api/projects/{projectId}/workspace`
+- `POST /api/projects/{projectId}/import`
+- `POST /api/projects/{projectId}/run`
+- `PATCH /api/projects/{projectId}/actions/{actionId}`

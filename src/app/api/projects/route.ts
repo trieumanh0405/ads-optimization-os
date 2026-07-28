@@ -5,14 +5,14 @@ import { listProjects, projectBundleSchema, saveProjectBundle } from "@/server/p
 export async function GET(request: Request) {
   try {
     const user = await requireUser(request);
-    return NextResponse.json({ projects: await listProjects(user.organizationId) });
+    return NextResponse.json({ projects: await listProjects(user) });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 401 }); }
 }
 
 export async function POST(request: Request) {
   try {
-    const user = await requireUser(request, ["admin", "leader"]);
+    const user = await requireUser(request);
     const bundle = projectBundleSchema.parse(await request.json());
-    return NextResponse.json({ project: await saveProjectBundle(user.organizationId, bundle) }, { status: 201 });
+    return NextResponse.json({ project: await saveProjectBundle(user, bundle) }, { status: 201 });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 400 }); }
 }

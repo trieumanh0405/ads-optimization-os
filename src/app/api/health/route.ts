@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  const firebaseConfigured = Boolean(
-    process.env.FIREBASE_PROJECT_ID
-    && process.env.FIREBASE_CLIENT_EMAIL
-    && process.env.FIREBASE_PRIVATE_KEY
+  const supabaseConfigured = Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL
+    && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    && process.env.SUPABASE_SERVICE_ROLE_KEY
   );
   return NextResponse.json({
     status: "ok",
@@ -14,7 +14,7 @@ export function GET() {
     version: "1.0.0",
     runtime: "vercel-nextjs",
     browserWorkspace: true,
-    firebaseTeamBackendConfigured: firebaseConfigured,
+    supabaseTeamBackendConfigured: supabaseConfigured,
     capabilities: [
       "project-config",
       "csv-normalization",

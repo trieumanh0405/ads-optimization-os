@@ -8,6 +8,7 @@ import type { NormalizeError, SourceMapping } from "@/core/normalize";
 import { apiJson } from "@/product/api";
 import { requiredMappingGaps, suggestMappings } from "@/product/mapping";
 import type { LocalProject } from "@/product/types";
+import type { TeamApi } from "@/product/team-api";
 
 type NormalizeResponse = {
   facts: FactRow[];
@@ -20,6 +21,7 @@ type Props = {
   project: LocalProject;
   onUpdate: (project: LocalProject) => void;
   notify: (message: string, tone?: "success" | "error") => void;
+  teamApi?: TeamApi;
 };
 
 const fieldLabels: Record<string, string> = {
@@ -41,7 +43,7 @@ const fieldLabels: Record<string, string> = {
   sourceUpdatedAt: "Thời điểm data cập nhật"
 };
 
-export function DataImporter({ project, onUpdate, notify }: Props) {
+export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<Record<string, string>[]>([]);
@@ -131,6 +133,19 @@ export function DataImporter({ project, onUpdate, notify }: Props) {
         return;
       }
       const acceptedFacts = mode === "PARTIAL" ? result.facts : result.errors.length ? [] : result.facts;
+      if (teamApi) {
+        await teamApi("/api/projects", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            config: project.config, metricDefinitions: project.metricDefinitions, rules: project.rules,
+            mappings, metricMappings, dimensionMappings
+          })
+        });
+      }
+      const storedImport = teamApi ? await teamApi<{ imported: number; importRecord: LocalProject["imports"][number] }>(`/api/projects/${encodeURIComponent(project.config.projectId)}/import`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows, mode, fileName })
+      }) : null;
       const factsByKey = new Map(project.facts.map((fact) => [fact.sourceRowKey, fact]));
       for (const fact of acceptedFacts) factsByKey.set(fact.sourceRowKey, fact);
       const now = new Date().toISOString();
@@ -140,7 +155,7 @@ export function DataImporter({ project, onUpdate, notify }: Props) {
         mappings,
         metricMappings,
         dimensionMappings,
-        imports: [{
+        imports: [storedImport?.importRecord ?? {
           id: crypto.randomUUID(),
           importedAt: now,
           fileName,
