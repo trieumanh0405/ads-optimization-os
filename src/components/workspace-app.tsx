@@ -113,7 +113,7 @@ function upsertProject(state: WorkspaceState, project: LocalProject): WorkspaceS
   };
 }
 
-type TeamIdentity = { api: TeamApi; email: string; role: "admin" | "user" };
+type TeamIdentity = { api: TeamApi; email: string; organizationId: string; role: "admin" | "user" };
 type TeamMemberView = { userId: string; email: string; role: "admin" | "user"; projectIds: string[] };
 
 export function WorkspaceApp() {
@@ -134,7 +134,7 @@ function SupabaseTeamEntry() {
     const tentativeApi = createTeamApi(session.access_token, "");
     try {
       const response = await tentativeApi<{ user: { organizationId: string; role: string } }>("/api/me");
-      setIdentity({ api: createTeamApi(session.access_token, response.user.organizationId), email: session.user.email ?? "", role: response.user.role as "admin" | "user" });
+      setIdentity({ api: createTeamApi(session.access_token, response.user.organizationId), email: session.user.email ?? "", organizationId: response.user.organizationId, role: response.user.role as "admin" | "user" });
       setState("ready");
     } catch (error) {
       setIdentity(null);
@@ -232,7 +232,7 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
       if (!cancelled) { notify(error instanceof Error ? error.message : "TEAM_WORKSPACE_LOAD_FAILED", "error"); setHydrated(true); }
     });
     return () => { cancelled = true; };
-  }, [team]);
+  }, [team?.organizationId, team?.role]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -265,31 +265,35 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
     if (options?.syncConfig !== false) queueTeamBundle(nextProject);
   }
 
-  function queueTeamBundle(nextProject: LocalProject, immediately = false) {
-    if (!team) return;
+  function queueTeamBundle(nextProject: LocalProject, immediately = false): Promise<void> {
+    if (!team) return Promise.resolve();
     const currentTimer = teamSyncTimers.current.get(nextProject.config.projectId);
     if (currentTimer) window.clearTimeout(currentTimer);
-    const sync = async () => {
-      try {
-        await team.api("/api/projects", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            config: nextProject.config, metricDefinitions: nextProject.metricDefinitions,
-            rules: nextProject.rules, mappings: nextProject.mappings,
-            metricMappings: nextProject.metricMappings, dimensionMappings: nextProject.dimensionMappings
-          })
-        });
-      } catch (error) { notify(error instanceof Error ? error.message : "TEAM_PROJECT_SYNC_FAILED", "error"); }
-    };
-    if (immediately) void sync();
-    else teamSyncTimers.current.set(nextProject.config.projectId, window.setTimeout(() => { void sync(); }, 800));
+    const sync = () => team.api("/api/projects", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        config: nextProject.config, metricDefinitions: nextProject.metricDefinitions,
+        rules: nextProject.rules, mappings: nextProject.mappings,
+        metricMappings: nextProject.metricMappings, dimensionMappings: nextProject.dimensionMappings
+      })
+    }).then(() => undefined);
+    if (immediately) return sync();
+    teamSyncTimers.current.set(nextProject.config.projectId, window.setTimeout(() => {
+      void sync().catch((error) => notify(error instanceof Error ? error.message : "TEAM_PROJECT_SYNC_FAILED", "error"));
+    }, 800));
+    return Promise.resolve();
   }
 
-  function createNewProject() {
+  async function createNewProject() {
     if (!createInput.projectName.trim() || !createInput.accountId.trim() || createInput.target <= 0) {
       return notify("Project name, Account ID và target KPI là bắt buộc.", "error");
     }
     const next = createProject(createInput);
+    try {
+      await queueTeamBundle(next, true);
+    } catch (error) {
+      return notify(error instanceof Error ? error.message : "TEAM_PROJECT_CREATE_FAILED", "error");
+    }
     setDeletableProjectIds((current) => new Set([...current, next.config.projectId]));
     setWorkspace((current) => ({
       ...current,
@@ -300,7 +304,6 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
     setCreateInput(defaultCreateInput());
     setShowCreate(false);
     window.history.replaceState(null, "", "#project_setup");
-    queueTeamBundle(next, true);
     notify("Đã tạo project và bộ rule mặc định.");
   }
 
