@@ -52,6 +52,13 @@ export const metricDefinitionSchema = z.object({
   nullWhenDenominatorZero: z.boolean().default(true)
 });
 
+export const projectDataSourceSchema = z.object({
+  kind: z.enum(["CSV", "GOOGLE_SHEETS"]).default("CSV"),
+  spreadsheetId: z.string().min(1).optional(),
+  sheetName: z.string().min(1).optional(),
+  headerRow: z.number().int().min(1).max(100).optional()
+});
+
 export const projectConfigSchema = z.object({
   projectId: z.string().min(1),
   projectName: z.string().min(1),
@@ -85,7 +92,8 @@ export const projectConfigSchema = z.object({
   }),
   maxDailyScalePct: z.number().min(0).max(1),
   maxDailyScaleActions: z.number().int().nonnegative(),
-  deferParentScaleWhenChildAction: z.boolean().default(true)
+  deferParentScaleWhenChildAction: z.boolean().default(true),
+  dataSource: projectDataSourceSchema.default({ kind: "CSV" })
 });
 
 export const optimizationRuleSchema = z.object({
@@ -129,6 +137,7 @@ export const engineRequestSchema = z.object({
 
 export type FactRow = z.infer<typeof factRowSchema>;
 export type MetricDefinition = z.infer<typeof metricDefinitionSchema>;
+export type ProjectDataSource = z.infer<typeof projectDataSourceSchema>;
 export type ProjectConfig = z.infer<typeof projectConfigSchema>;
 export type OptimizationRule = z.infer<typeof optimizationRuleSchema>;
 export type EngineRequest = z.infer<typeof engineRequestSchema>;

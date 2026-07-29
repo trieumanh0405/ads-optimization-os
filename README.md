@@ -5,7 +5,7 @@ An internal decision-support tool for trained media buyers. It normalizes advert
 ## What works
 
 - Multi-brand project configuration, KPI dictionary, custom metrics and mapping.
-- CSV validation and normalization with Strict and Partial modes.
+- CSV and Google Sheets validation/normalization with Strict and Partial modes.
 - Deterministic Campaign, Ad set and Ad rule engine with lookback windows, conflict detection, CBO/ABO ownership and scale guardrails.
 - Action Queue with PENDING, DONE, REJECTED and DEFERRED lifecycle plus append-only audit log.
 - Optional multi-provider AI diagnostics. AI is advisory and cannot override deterministic actions.
@@ -50,7 +50,11 @@ Follow [Supabase deployment setup](docs/SUPABASE_SETUP.md). In short:
 3. Add the Supabase environment variables to Vercel.
 4. Deploy and sign in; the first authenticated user creates the organization and becomes admin.
 
-Never expose `SUPABASE_SERVICE_ROLE_KEY` or provider API keys to the browser or commit them to Git.
+Never expose `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, or provider API keys to the browser or commit them to Git.
+
+### Google Sheets online sync
+
+Create a read-only Google service account, enable Google Sheets API, share each raw-data sheet with that service account as **Viewer**, and set its complete JSON credential in the server-only `GOOGLE_SERVICE_ACCOUNT_JSON` Vercel variable. In Data import, select **Google Sheets**, paste the Sheet URL/ID, select the raw tab and scan headers. Column mapping remains project-specific and is saved with the project after the first successful import.
 
 ## Validation
 

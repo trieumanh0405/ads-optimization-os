@@ -20,7 +20,7 @@ const config: ProjectConfig = {
   target: 100, ruleSetId: "R", ruleVersion: 1, dataFreshnessHours: 6,
   windows: [{ id: "TODAY", days: 1, weight: 0.4, required: true }, { id: "SHORT", days: 3, weight: 0.6, required: true }],
   contextWeights: { CAMPAIGN: { entity: 1, context: 0 }, ADSET: { entity: 1, context: 0 }, AD: { entity: 1, context: 0 } },
-  maxDailyScalePct: 0.2, maxDailyScaleActions: 3, deferParentScaleWhenChildAction: true
+  maxDailyScalePct: 0.2, maxDailyScaleActions: 3, deferParentScaleWhenChildAction: true, dataSource: { kind: "CSV" }
 };
 const metric = { key: "CPL", label: "CPL", kind: "RATIO", numerator: "spend", denominator: "result", multiplier: 1, direction: "LOWER_IS_BETTER", nullWhenDenominatorZero: true } as const;
 const rule = (id: string, actionCode: OptimizationRule["actionCode"], priority = 10): OptimizationRule => ({
