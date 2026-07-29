@@ -13,4 +13,23 @@ describe("Google Sheets connector", () => {
     expect(output.rows).toEqual([{ Day: "2026-07-28", "Amount spent": "100000", Leads: "4" }]);
     expect(output.truncated).toBe(false);
   });
+
+  it("ignores formula-only padding below the real ads export", () => {
+    const output = rowsFromGoogleValues([
+      ["Day", "Campaign Id", "Ad Id", "Amount Spent", "Calculated Spend"],
+      ["2026-07-29", "camp-1", "ad-1", "100", "110"],
+      ["", "", "", "", "0"],
+      ["", "", "", "", "0"]
+    ], 1);
+    expect(output.rows).toHaveLength(1);
+    expect(output.rows[0]?.["Ad Id"]).toBe("ad-1");
+  });
+
+  it("keeps malformed anchored rows so import QC can report them", () => {
+    const output = rowsFromGoogleValues([
+      ["Day", "Campaign Id", "Ad Id", "Amount Spent"],
+      ["2026-07-29", "camp-1", "", "100"]
+    ], 1);
+    expect(output.rows).toHaveLength(1);
+  });
 });

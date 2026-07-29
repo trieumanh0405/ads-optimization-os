@@ -4,6 +4,11 @@ import { z } from "zod";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const MAX_ROWS = 20_000;
+const ROW_ANCHOR_HEADERS = new Set([
+  "date", "day", "reporting starts", "reporting ends", "account id",
+  "campaign id", "campaign name", "ad set id", "adset id", "ad set name", "adset name",
+  "ad id", "ad name"
+]);
 
 const credentialsSchema = z.object({
   type: z.literal("service_account"),
@@ -87,11 +92,20 @@ export function rowsFromGoogleValues(values: unknown[][], headerRow: number) {
   if (!headerCells?.length) throw new Error("GOOGLE_SHEETS_HEADER_ROW_EMPTY");
   const headers = headerCells.map((value, index) => String(value ?? "").trim() || `Column ${index + 1}`);
   if (new Set(headers).size !== headers.length) throw new Error("GOOGLE_SHEETS_DUPLICATE_HEADERS");
-  const rows = values.slice(headerIndex + 1)
-    .filter((line) => line.some((value) => String(value ?? "").trim() !== ""))
+  const normalizedHeaders = headers.map((header) => header.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim());
+  const anchorIndexes = normalizedHeaders.flatMap((header, index) => ROW_ANCHOR_HEADERS.has(header) ? [index] : []);
+  const nonEmptyLines = values.slice(headerIndex + 1)
+    .filter((line) => line.some((value) => String(value ?? "").trim() !== ""));
+  // Connector/Looker tabs often carry formulas below the real export range.
+  // A formula returning 0 is not an ad row; require an identity/date anchor
+  // whenever the source exposes standard Ads Manager headers.
+  const dataLines = anchorIndexes.length
+    ? nonEmptyLines.filter((line) => anchorIndexes.some((index) => String(line[index] ?? "").trim() !== ""))
+    : nonEmptyLines;
+  const rows = dataLines
     .slice(0, MAX_ROWS)
     .map((line) => Object.fromEntries(headers.map((header, index) => [header, String(line[index] ?? "")]))) as Record<string, string>[];
-  return { headers, rows, truncated: values.slice(headerIndex + 1).filter((line) => line.some((value) => String(value ?? "").trim() !== "")).length > MAX_ROWS };
+  return { headers, rows, truncated: dataLines.length > MAX_ROWS };
 }
 
 export async function previewGoogleSheet(input: { spreadsheetInput: string; sheetName?: string; headerRow?: number }): Promise<GoogleSheetPreview> {
