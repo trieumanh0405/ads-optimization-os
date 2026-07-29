@@ -15,7 +15,7 @@ export const projectBundleSchema = z.object({
   mappings: z.array(z.object({
     canonicalField: canonicalFieldSchema, sourceColumn: z.string().min(1),
     required: z.boolean(), defaultValue: z.unknown().optional()
-  })).min(1),
+  })).default([]),
   metricMappings: z.array(z.object({ metricKey: z.string().min(1), sourceColumn: z.string().min(1) })).default([]),
   dimensionMappings: z.array(z.object({ dimensionKey: z.string().min(1), sourceColumn: z.string().min(1) })).default([])
 });
