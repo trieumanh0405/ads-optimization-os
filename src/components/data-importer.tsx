@@ -4,18 +4,18 @@ import { useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, Plus, RefreshCw, Trash2, UploadCloud } from "lucide-react";
 import { parseCsv } from "@/core/csv";
 import type { FactRow } from "@/core/schemas";
-import type { NormalizeError, SourceMapping } from "@/core/normalize";
-import { apiJson } from "@/product/api";
+import { normalizeRows, type NormalizeError, type SourceMapping } from "@/core/normalize";
 import { requiredMappingGaps, suggestMappings } from "@/product/mapping";
 import type { LocalProject } from "@/product/types";
 import type { TeamApi } from "@/product/team-api";
 
-type NormalizeResponse = {
-  facts: FactRow[];
-  errors: NormalizeError[];
-  accepted: number;
-  rejected: number;
-};
+const IMPORT_BATCH_SIZE = 350;
+
+function inBatches<T>(items: T[], size: number) {
+  const batches: T[][] = [];
+  for (let index = 0; index < items.length; index += size) batches.push(items.slice(index, index + size));
+  return batches;
+}
 
 type GoogleSheetPreview = {
   spreadsheetId: string;
@@ -71,6 +71,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
   const [dimensionMappings, setDimensionMappings] = useState(project.dimensionMappings);
   const [errors, setErrors] = useState<NormalizeError[]>([]);
   const [busy, setBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ completed: number; total: number } | null>(null);
 
   const headers = useMemo(() => rows[0] ? Object.keys(rows[0]) : [], [rows]);
   const gaps = useMemo(() => requiredMappingGaps(mappings), [mappings]);
@@ -165,18 +166,13 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
     }
     setBusy(true);
     try {
-      const result = await apiJson<NormalizeResponse>("/api/normalize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: project.config.projectId,
-          platform: project.config.platform,
-          accountId: project.config.accountId,
-          mappings,
-          metricMappings,
-          dimensionMappings,
-          rows
-        })
+      const result = normalizeRows(rows, {
+        projectId: project.config.projectId,
+        platform: project.config.platform,
+        accountId: project.config.accountId,
+        mappings,
+        metricMappings,
+        dimensionMappings
       });
       setErrors(result.errors);
       if (mode === "STRICT" && result.errors.length) {
@@ -202,10 +198,25 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
           })
         });
       }
-      const storedImport = teamApi ? await teamApi<{ imported: number; importRecord: LocalProject["imports"][number] }>(`/api/projects/${encodeURIComponent(project.config.projectId)}/import`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows, mode, fileName })
-      }) : null;
+      let storedImport: { importRecord: LocalProject["imports"][number] } | null = null;
+      if (teamApi) {
+        const batches = inBatches(acceptedFacts, IMPORT_BATCH_SIZE);
+        setBatchProgress({ completed: 0, total: batches.length });
+        for (let index = 0; index < batches.length; index += 1) {
+          await teamApi(`/api/projects/${encodeURIComponent(project.config.projectId)}/import`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ facts: batches[index] })
+          });
+          setBatchProgress({ completed: index + 1, total: batches.length });
+        }
+        storedImport = await teamApi<{ importRecord: LocalProject["imports"][number] }>(`/api/projects/${encodeURIComponent(project.config.projectId)}/import`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ finalize: {
+            fileName, entityLevel, accepted: acceptedFacts.length, rejected: new Set(result.errors.map((item) => item.row)).size,
+            mode, errorCodes: [...new Set(result.errors.map((item) => item.code))]
+          } })
+        });
+      }
       const factsByKey = new Map(project.facts.map((fact) => [fact.sourceRowKey, fact]));
       for (const fact of acceptedFacts) factsByKey.set(fact.sourceRowKey, fact);
       const now = new Date().toISOString();
@@ -222,7 +233,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
           fileName,
           entityLevel,
           accepted: acceptedFacts.length,
-          rejected: result.rejected,
+          rejected: new Set(result.errors.map((item) => item.row)).size,
           mode,
           errorCodes: [...new Set(result.errors.map((item) => item.code))]
         }, ...project.imports].slice(0, 100),
@@ -233,6 +244,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
       notify(error instanceof Error ? error.message : "Import thất bại.", "error");
     } finally {
       setBusy(false);
+      setBatchProgress(null);
     }
   }
 
@@ -415,7 +427,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
             <span className="helperText">Strict: có 1 lỗi thì không lưu batch. Partial: chỉ lưu dòng hợp lệ.</span>
             <button className="primaryAction" disabled={busy || gaps.length > 0} onClick={validateAndImport}>
               <FileSpreadsheet size={17} />
-              {busy ? "Đang chuẩn hóa…" : "Validate & import"}
+              {busy ? batchProgress ? `Đang lưu ${batchProgress.completed}/${batchProgress.total} batch…` : "Đang chuẩn hóa…" : "Validate & import"}
             </button>
           </div>
         </section>

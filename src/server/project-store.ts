@@ -145,6 +145,42 @@ export async function importProjectRows(input: { projectId: string; user: AppUse
   return { imported: facts.length, errors: normalized.errors, importRecord, status: normalized.errors.length ? "PARTIAL" as const : "IMPORTED" as const };
 }
 
+/** Stores pre-normalized facts in a bounded request batch for large imports. */
+export async function storeNormalizedFacts(input: { projectId: string; user: AppUser; facts: FactRow[] }) {
+  await assertProjectAccess(input.projectId, input.user, "import");
+  if (input.facts.some((fact) => fact.projectId !== input.projectId)) throw new Error("FACT_PROJECT_MISMATCH");
+  if (!input.facts.length) return { stored: 0 };
+  const { error } = await supabaseAdmin().from("facts").upsert(input.facts.map((fact) => ({
+    fact_id: documentId(fact.sourceRowKey), project_id: input.projectId, source_row_key: fact.sourceRowKey,
+    date: fact.date, entity_level: fact.entityLevel, source_updated_at: fact.sourceUpdatedAt, data: fact
+  })), { onConflict: "project_id,source_row_key" });
+  assertSupabaseResult(error);
+  return { stored: input.facts.length };
+}
+
+export async function finalizeProjectImport(input: {
+  projectId: string;
+  user: AppUser;
+  fileName?: string;
+  entityLevel: FactRow["entityLevel"];
+  accepted: number;
+  rejected: number;
+  mode: "STRICT" | "PARTIAL";
+  errorCodes: string[];
+}) {
+  await assertProjectAccess(input.projectId, input.user, "import");
+  const importRecord: ImportRecord = {
+    id: crypto.randomUUID(), importedAt: new Date().toISOString(), fileName: input.fileName ?? "Batch import",
+    entityLevel: input.entityLevel, accepted: input.accepted, rejected: input.rejected,
+    mode: input.mode, errorCodes: [...new Set(input.errorCodes)]
+  };
+  const { error } = await supabaseAdmin().from("import_runs").insert({
+    import_id: importRecord.id, project_id: input.projectId, imported_at: importRecord.importedAt, data: importRecord
+  });
+  assertSupabaseResult(error);
+  return importRecord;
+}
+
 export async function getStoredProjectWorkspace(projectId: string, user: AppUser): Promise<LocalProject> {
   await assertProjectAccess(projectId, user);
   const supabase = supabaseAdmin();
