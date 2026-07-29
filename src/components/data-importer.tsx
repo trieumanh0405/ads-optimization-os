@@ -251,8 +251,8 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
               <button className={sourceKind === "GOOGLE_SHEETS" ? "active" : ""} onClick={() => chooseSource("GOOGLE_SHEETS")}>Google Sheets</button>
             </div>
             <div className="segmented" aria-label="Import mode">
-              <button className={mode === "STRICT" ? "active" : ""} onClick={() => setMode("STRICT")}>Strict</button>
-              <button className={mode === "PARTIAL" ? "active" : ""} onClick={() => setMode("PARTIAL")}>Partial</button>
+              <button className={mode === "STRICT" ? "active" : ""} onClick={() => setMode("STRICT")}>Strict · an toàn</button>
+              <button className={mode === "PARTIAL" ? "active" : ""} onClick={() => setMode("PARTIAL")}>Partial · lọc lỗi</button>
             </div>
           </div>
         </div>
@@ -306,6 +306,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
             <input value={project.config.projectName} readOnly />
           </label>
         </div>
+        <p className="importGuidance"><strong>Strict</strong> chặn cả batch nếu có một dòng lỗi — dùng khi setup nguồn lần đầu. <strong>Partial</strong> chỉ nhập dòng hợp lệ và liệt kê dòng bị bỏ — chỉ dùng sau khi bạn đã kiểm tra mapping. Nếu file ở cấp <strong>Ad</strong> có cả Campaign và Ad set, chỉ cần import một lần; tool tự tổng hợp lên hai cấp cha. CBO = Campaign sở hữu budget, ABO = Ad set sở hữu budget.</p>
       </section>
 
       {rows.length > 0 && (
