@@ -22,10 +22,6 @@ export const projectBundleSchema = z.object({
 export type ProjectBundle = z.infer<typeof projectBundleSchema>;
 
 type ProjectCapability = "view" | "import" | "run" | "editConfig" | "editRules" | "reviewActions";
-const capabilityColumn: Record<Exclude<ProjectCapability, "view">, string> = {
-  import: "can_import", run: "can_run", editConfig: "can_edit_config",
-  editRules: "can_edit_rules", reviewActions: "can_review_actions"
-};
 
 function documentId(key: string) {
   return createHash("sha256").update(key).digest("hex");
@@ -39,21 +35,20 @@ function documentId(key: string) {
 export async function assertProjectAccess(projectId: string, user: AppUser, capability: ProjectCapability = "view") {
   const supabase = supabaseAdmin();
   const { data: project, error: projectError } = await supabase
-    .from("projects").select("project_id, organization_id").eq("project_id", projectId).maybeSingle();
+    .from("projects").select("project_id, organization_id, created_by").eq("project_id", projectId).maybeSingle();
   assertSupabaseResult(projectError);
   if (!project) throw new Error("PROJECT_NOT_FOUND");
   if (project.organization_id !== user.organizationId) throw new Error("PROJECT_FORBIDDEN");
-  if (user.role === "admin" || user.role === "leader") return project;
+  if (user.role === "admin" || project.created_by === user.uid) return project;
 
   const { data: membership, error: membershipError } = await supabase
     .from("project_members")
-    .select("can_import, can_run, can_edit_config, can_edit_rules, can_review_actions")
+    .select("user_id")
     .eq("project_id", projectId).eq("user_id", user.uid).maybeSingle();
   assertSupabaseResult(membershipError);
   if (!membership) throw new Error("PROJECT_FORBIDDEN");
-  if (capability !== "view" && !membership[capabilityColumn[capability] as keyof typeof membership]) {
-    throw new Error("PROJECT_CAPABILITY_FORBIDDEN");
-  }
+  // A project assignment grants the whole operating workflow. Keeping this
+  // atomic avoids confusing per-button permission matrices for media buyers.
   return project;
 }
 
@@ -69,7 +64,6 @@ export async function saveProjectBundle(user: AppUser, bundle: ProjectBundle) {
       await assertProjectAccess(parsed.config.projectId, user, "editRules");
     }
   }
-  else if (user.role !== "admin" && user.role !== "leader") throw new Error("PROJECT_CREATE_FORBIDDEN");
   if (existing && existing.organization_id !== user.organizationId) throw new Error("PROJECT_ID_ALREADY_OWNED");
 
   const now = new Date().toISOString();
@@ -77,7 +71,7 @@ export async function saveProjectBundle(user: AppUser, bundle: ProjectBundle) {
     project_id: parsed.config.projectId, organization_id: user.organizationId,
     config: parsed.config, metric_definitions: parsed.metricDefinitions, rules: parsed.rules,
     mappings: parsed.mappings, metric_mappings: parsed.metricMappings,
-    dimension_mappings: parsed.dimensionMappings, updated_at: now,
+    dimension_mappings: parsed.dimensionMappings, updated_at: now, created_by: existing ? undefined : user.uid,
     created_at: existing ? undefined : now
   }, { onConflict: "project_id" });
   assertSupabaseResult(error);
@@ -87,20 +81,27 @@ export async function saveProjectBundle(user: AppUser, bundle: ProjectBundle) {
 export async function listProjects(user: AppUser) {
   const supabase = supabaseAdmin();
   const { data: projects, error } = await supabase
-    .from("projects").select("project_id, config, updated_at").eq("organization_id", user.organizationId).order("updated_at", { ascending: false });
+    .from("projects").select("project_id, config, updated_at, created_by").eq("organization_id", user.organizationId).order("updated_at", { ascending: false });
   assertSupabaseResult(error);
   let visible = projects ?? [];
-  if (user.role !== "admin" && user.role !== "leader") {
+  if (user.role !== "admin") {
     const { data: memberships, error: membershipError } = await supabase
       .from("project_members").select("project_id").eq("user_id", user.uid);
     assertSupabaseResult(membershipError);
     const allowed = new Set((memberships ?? []).map((item) => item.project_id));
-    visible = visible.filter((item) => allowed.has(item.project_id));
+    visible = visible.filter((item) => item.created_by === user.uid || allowed.has(item.project_id));
   }
   return visible.map((project) => {
     const config = project.config as { projectName?: string; primaryMetricKey?: string } | null;
-    return { projectId: project.project_id, projectName: config?.projectName, primaryMetricKey: config?.primaryMetricKey, updatedAt: project.updated_at };
+    return { projectId: project.project_id, projectName: config?.projectName, primaryMetricKey: config?.primaryMetricKey, updatedAt: project.updated_at, canDelete: user.role === "admin" || project.created_by === user.uid };
   });
+}
+
+export async function deleteStoredProject(projectId: string, user: AppUser) {
+  const project = await assertProjectAccess(projectId, user);
+  if (user.role !== "admin" && project.created_by !== user.uid) throw new Error("PROJECT_DELETE_FORBIDDEN");
+  const { error } = await supabaseAdmin().from("projects").delete().eq("project_id", projectId).eq("organization_id", user.organizationId);
+  assertSupabaseResult(error);
 }
 
 export async function getProjectBundle(projectId: string, user: AppUser): Promise<ProjectBundle> {

@@ -52,7 +52,7 @@ Stored APIs are designed for shared operation:
 - `organizations/{organizationId}/aiProviders/{providerId}`
 - `organizations/{organizationId}/analysisPlaybooks/{playbookId}`
 
-Supabase Auth sessions authenticate users. Organization roles and project capabilities live in PostgreSQL; server APIs enforce them even though their service-role client bypasses RLS. Raw data should stay outside hot dashboard reads; production connectors upsert canonical daily facts.
+Supabase Auth sessions authenticate users. PostgreSQL stores a simple admin/user model: admins manage the team and all projects, while users operate their own or assigned projects. Server APIs enforce these rules even though their service-role client bypasses RLS. Raw data should stay outside hot dashboard reads; production connectors upsert canonical daily facts.
 
 ## Data contract
 

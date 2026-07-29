@@ -43,9 +43,9 @@ For every later team member:
 
 1. They sign in once with Supabase Auth.
 2. An admin grants organization and project membership through the Supabase SQL Editor or the forthcoming team-admin screen.
-3. Give only the necessary project capabilities: `can_import`, `can_run`, `can_edit_config`, `can_edit_rules`, `can_review_actions`.
+3. Select the projects that person can operate. An assignment grants import, configuration, rule, run and Action Queue access together.
 
-Admin and leader roles see every project in their organization. Buyer and reviewer roles see only explicitly assigned projects.
+There are only two visible roles: `admin` sees all projects and manages the team; `user` sees projects they created or that an admin assigned. A user can delete only a project they created.
 
 ## Operational data flow
 

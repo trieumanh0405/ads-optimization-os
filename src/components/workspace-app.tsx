@@ -6,7 +6,7 @@ import {
   CircleDollarSign, ClipboardCheck, Clock3, CloudOff, Database, Download, FileCheck2,
   FileSpreadsheet, Gauge, History, LayoutDashboard, ListChecks, Menu, Play,
   Plus, RefreshCw, Save, Settings2, ShieldAlert, SlidersHorizontal, Sparkles,
-  Target, Trash2, Upload, X, XCircle
+  Target, Trash2, Upload, UsersRound, X, XCircle
 } from "lucide-react";
 import type { ActionEvent, ActionRecord, ApprovalStatus } from "@/core/actions";
 import { metricDefinitionSchema, type MetricDefinition, type ProjectConfig } from "@/core/schemas";
@@ -113,14 +113,15 @@ function upsertProject(state: WorkspaceState, project: LocalProject): WorkspaceS
   };
 }
 
-type TeamIdentity = { api: TeamApi; email: string; role: string };
+type TeamIdentity = { api: TeamApi; email: string; role: "admin" | "user" };
+type TeamMemberView = { userId: string; email: string; role: "admin" | "user"; projectIds: string[] };
 
 export function WorkspaceApp() {
   return isSupabaseBrowserConfigured() ? <SupabaseTeamEntry /> : <WorkspaceShell />;
 }
 
 function SupabaseTeamEntry() {
-  const [state, setState] = useState<"loading" | "signed-out" | "onboarding" | "ready" | "error">("loading");
+  const [state, setState] = useState<"loading" | "signed-out" | "onboarding" | "access-required" | "ready" | "error">("loading");
   const [email, setEmail] = useState("");
   const [organizationName, setOrganizationName] = useState("");
   const [message, setMessage] = useState("");
@@ -130,14 +131,17 @@ function SupabaseTeamEntry() {
     const { data } = await supabaseBrowser().auth.getSession();
     const session = data.session;
     if (!session) { setIdentity(null); setState("signed-out"); return; }
+    const tentativeApi = createTeamApi(session.access_token, "");
     try {
-      const tentativeApi = createTeamApi(session.access_token, "");
       const response = await tentativeApi<{ user: { organizationId: string; role: string } }>("/api/me");
-      setIdentity({ api: createTeamApi(session.access_token, response.user.organizationId), email: session.user.email ?? "", role: response.user.role });
+      setIdentity({ api: createTeamApi(session.access_token, response.user.organizationId), email: session.user.email ?? "", role: response.user.role as "admin" | "user" });
       setState("ready");
     } catch (error) {
       setIdentity(null);
-      setState(error instanceof Error && error.message.includes("MEMBERSHIP_REQUIRED") ? "onboarding" : "error");
+      if (error instanceof Error && error.message.includes("MEMBERSHIP_REQUIRED")) {
+        const bootstrap = await tentativeApi<{ bootstrapAllowed: boolean }>("/api/onboarding").catch(() => ({ bootstrapAllowed: false }));
+        setState(bootstrap.bootstrapAllowed ? "onboarding" : "access-required");
+      } else setState("error");
       setMessage(error instanceof Error ? error.message : "Không thể kết nối Supabase.");
     }
   }
@@ -177,6 +181,11 @@ function SupabaseTeamEntry() {
       <form onSubmit={createOrganization}><input value={organizationName} onChange={(event) => setOrganizationName(event.target.value)} placeholder="Tên agency / team" required minLength={2} /><button className="primaryAction" type="submit">Tạo organization</button></form>
       {message && <small>{message}</small>}</section></main>
   );
+  if (state === "access-required") return (
+    <main className="loadingScreen"><section className="sectionCard authCard"><h1>Chờ admin cấp quyền</h1><p>Email này chưa được thêm vào team. Hãy nhờ Admin mở mục <strong>Team</strong>, nhập email và chọn các project bạn được làm việc.</p>
+      <button className="secondaryAction" onClick={() => void supabaseBrowser().auth.signOut().then(() => setState("signed-out"))}>Dùng email khác</button>
+      {message && <small>{message}</small>}</section></main>
+  );
   return (
     <main className="loadingScreen"><section className="sectionCard authCard"><h1>Đăng nhập team workspace</h1><p>Dùng email đã được cấp quyền. Tool gửi magic link, không lưu mật khẩu tại đây.</p>
       <form onSubmit={sendMagicLink}><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@agency.com" required /><button className="primaryAction" type="submit">Gửi link đăng nhập</button></form>
@@ -188,6 +197,8 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
   const [workspace, setWorkspace] = useState<WorkspaceState>(structuredClone(EMPTY_WORKSPACE));
   const [hydrated, setHydrated] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [showTeamAccess, setShowTeamAccess] = useState(false);
+  const [deletableProjectIds, setDeletableProjectIds] = useState<Set<string>>(new Set());
   const [createInput, setCreateInput] = useState<ProjectCreateInput>(defaultCreateInput);
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
@@ -199,14 +210,17 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
     void (async () => {
       const state = await loadWorkspace();
       let projects = state.projects;
+      let listedProjects: Array<{ projectId: string; canDelete: boolean }> = [];
       if (team) {
-        const listed = await team.api<{ projects: Array<{ projectId: string }> }>("/api/projects");
+        const listed = await team.api<{ projects: Array<{ projectId: string; canDelete: boolean }> }>("/api/projects");
+        listedProjects = listed.projects;
         projects = await Promise.all(listed.projects.map(async ({ projectId }) => {
           const result = await team.api<{ project: LocalProject }>(`/api/projects/${encodeURIComponent(projectId)}/workspace`);
           return result.project;
         }));
       }
       if (cancelled) return;
+      setDeletableProjectIds(new Set(listedProjects.filter((item) => item.canDelete).map((item) => item.projectId)));
       const hash = window.location.hash.replace("#", "").toUpperCase() as WorkspaceView;
       setWorkspace({
         ...state, projects, activeProjectId: projects.some((item) => item.config.projectId === state.activeProjectId)
@@ -276,6 +290,7 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
       return notify("Project name, Account ID và target KPI là bắt buộc.", "error");
     }
     const next = createProject(createInput);
+    setDeletableProjectIds((current) => new Set([...current, next.config.projectId]));
     setWorkspace((current) => ({
       ...current,
       activeProjectId: next.config.projectId,
@@ -289,9 +304,14 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
     notify("Đã tạo project và bộ rule mặc định.");
   }
 
-  function deleteProject() {
-    if (!project || !window.confirm(`Xóa project "${project.config.projectName}" khỏi browser này? Hãy export backup trước nếu cần.`)) return;
+  async function deleteProject() {
+    if (!project || !window.confirm(`Xóa project "${project.config.projectName}"? Dữ liệu import, runs và action queue của project cũng bị xóa. Hãy export backup trước nếu cần.`)) return;
+    if (team) {
+      try { await team.api(`/api/projects/${encodeURIComponent(project.config.projectId)}`, { method: "DELETE" }); }
+      catch (error) { return notify(error instanceof Error ? error.message : "PROJECT_DELETE_FORBIDDEN", "error"); }
+    }
     const remaining = workspace.projects.filter((item) => item.config.projectId !== project.config.projectId);
+    setDeletableProjectIds((current) => { const next = new Set(current); next.delete(project.config.projectId); return next; });
     setWorkspace((current) => ({
       ...current,
       projects: remaining,
@@ -391,6 +411,7 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
           <div className="topbarActions">
             <button className="secondaryAction" onClick={exportAll}><Download size={16} /> Export</button>
             <button className="secondaryAction" onClick={() => importWorkspaceInput.current?.click()}><Upload size={16} /> Restore</button>
+            {team?.role === "admin" && <button className="secondaryAction" onClick={() => setShowTeamAccess(true)}><UsersRound size={16} /> Team</button>}
             <button className="primaryAction" onClick={() => setShowCreate(true)}><Plus size={16} /> Project mới</button>
             <input
               ref={importWorkspaceInput}
@@ -430,7 +451,7 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
             />
           )}
           {project && workspace.activeView === "PROJECT_SETUP" && (
-            <ProjectSetupView key={project.config.projectId} project={project} onUpdate={updateProject} onDelete={deleteProject} notify={notify} />
+            <ProjectSetupView key={project.config.projectId} project={project} onUpdate={updateProject} onDelete={deleteProject} canDelete={!team || deletableProjectIds.has(project.config.projectId)} notify={notify} />
           )}
           {project && workspace.activeView === "DATA_IMPORT" && (
             <DataImporter key={project.config.projectId} project={project} onUpdate={updateProject} notify={notify} teamApi={team?.api} />
@@ -468,6 +489,9 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
           onClose={() => setShowCreate(false)}
           onCreate={createNewProject}
         />
+      )}
+      {showTeamAccess && team?.role === "admin" && (
+        <TeamAccessDialog team={team} projects={workspace.projects} onClose={() => setShowTeamAccess(false)} notify={notify} />
       )}
       {toast && (
         <div className={`appToast ${toast.tone}`} role="status" aria-live="polite">
@@ -695,15 +719,96 @@ function CreateProjectDialog({
   );
 }
 
+function TeamAccessDialog({
+  team,
+  projects,
+  onClose,
+  notify
+}: {
+  team: TeamIdentity;
+  projects: LocalProject[];
+  onClose: () => void;
+  notify: (message: string, tone?: "success" | "error") => void;
+}) {
+  const [members, setMembers] = useState<TeamMemberView[]>([]);
+  const [email, setEmail] = useState("");
+  const [projectIds, setProjectIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const result = await team.api<{ members: TeamMemberView[] }>("/api/team/members");
+      setMembers(result.members);
+    } catch (error) { notify(error instanceof Error ? error.message : "TEAM_LOAD_FAILED", "error"); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { void refresh(); }, []);
+
+  function toggleProject(projectId: string) {
+    setProjectIds((current) => current.includes(projectId) ? current.filter((item) => item !== projectId) : [...current, projectId]);
+  }
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    if (!email.trim() || projectIds.length === 0) {
+      notify("Nhập email và chọn ít nhất một project.", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await team.api<{ invited: boolean }>("/api/team/members", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, projectIds })
+      });
+      notify(result.invited ? "Đã gửi email mời và cấp project." : "Đã cập nhật project cho user.");
+      setEmail(""); setProjectIds([]); await refresh();
+    } catch (error) { notify(error instanceof Error ? error.message : "TEAM_SAVE_FAILED", "error"); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="modalBackdrop" role="presentation" onMouseDown={onClose}>
+      <section className="productModal wideModal" role="dialog" aria-modal="true" aria-labelledby="team-access-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modalTitle">
+          <div><span className="sectionKicker">ADMIN ONLY</span><h2 id="team-access-title">Team & project access</h2><p>Thêm email và chọn brand được thao tác. User có toàn quyền vận hành trên project được giao, nhưng không xóa project của người khác.</p></div>
+          <button className="iconAction" onClick={onClose} aria-label="Đóng"><X size={18} /></button>
+        </div>
+        <form className="teamAccessForm" onSubmit={save}>
+          <label>Email user<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="media-buyer@agency.com" required /></label>
+          <fieldset><legend>Project được giao</legend>
+            {projects.length ? projects.map((project) => <label className="checkboxLine" key={project.config.projectId}>
+              <input type="checkbox" checked={projectIds.includes(project.config.projectId)} onChange={() => toggleProject(project.config.projectId)} />
+              <span>{project.config.projectName}</span>
+            </label>) : <p className="helperText">Tạo project trước rồi cấp quyền cho user.</p>}
+          </fieldset>
+          <div className="modalActions"><button className="secondaryAction" type="button" onClick={onClose}>Đóng</button><button className="primaryAction" disabled={saving} type="submit"><UsersRound size={16} /> {saving ? "Đang lưu…" : "Mời / cập nhật user"}</button></div>
+        </form>
+        <div className="teamMemberList" aria-live="polite">
+          <strong>Thành viên hiện tại</strong>
+          {loading ? <p className="helperText">Đang tải team…</p> : members.map((member) => <button className="teamMemberRow" type="button" key={member.userId} onClick={() => { if (member.role === "user") { setEmail(member.email); setProjectIds(member.projectIds); } }} disabled={member.role === "admin"}>
+            <span><strong>{member.email}</strong><small>{member.role === "admin" ? "Admin · tất cả project" : `${member.projectIds.length} project được giao`}</small></span>
+            {member.role === "user" && <span className="statusBadge neutral">Sửa quyền</span>}
+          </button>)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ProjectSetupView({
   project,
   onUpdate,
   onDelete,
+  canDelete,
   notify
 }: {
   project: LocalProject;
   onUpdate: (project: LocalProject, options?: { syncConfig?: boolean }) => void;
   onDelete: () => void;
+  canDelete: boolean;
   notify: (message: string, tone?: "success" | "error") => void;
 }) {
   const [metricDraft, setMetricDraft] = useState<MetricDefinition>({
@@ -937,7 +1042,7 @@ function ProjectSetupView({
           </label>
         </div>
         <div className="cardActions">
-          <button className="dangerAction" onClick={onDelete}><Trash2 size={15} /> Xóa project</button>
+          {canDelete && <button className="dangerAction" onClick={() => void onDelete()}><Trash2 size={15} /> Xóa project</button>}
           <span className="helperText"><Save size={14} /> Mọi thay đổi được auto-save vào IndexedDB.</span>
         </div>
       </section>

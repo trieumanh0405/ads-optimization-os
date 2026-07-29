@@ -4,7 +4,7 @@ Stored-project routes and stored AI configuration routes require a Supabase acce
 
 ## Health
 
-- `GET /api/health` — runtime status, capabilities and whether Firebase team backend credentials are configured
+- `GET /api/health` — runtime status, capabilities and whether Supabase team backend credentials are configured
 
 ## Project configuration
 

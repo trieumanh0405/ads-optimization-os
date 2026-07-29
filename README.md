@@ -25,9 +25,9 @@ Keep wide raw exports in Google Sheets/Drive initially. Only normalized facts an
 
 ## Team authorization
 
-- `admin` and `leader`: see all projects in the organization.
-- `buyer` and `reviewer`: see only projects assigned through `project_members`.
-- Per-project capabilities: import, run, edit config, edit rules and review actions.
+- `admin`: creates users, assigns projects and sees every project.
+- `user`: works on projects they created or were assigned; they cannot delete another user's project.
+- An assignment grants the complete operating workflow (import, rules, run and Action Queue), keeping access easy to administer.
 - The server validates access on every stored API route; hiding a UI button is never treated as authorization.
 
 ## Local development

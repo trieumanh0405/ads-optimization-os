@@ -7,7 +7,7 @@ import { parseCsv } from "@/core/csv";
 const schema = z.object({ rows: z.array(z.record(z.unknown())).min(1), mode: z.enum(["STRICT", "PARTIAL"]).default("STRICT"), fileName: z.string().max(255).optional() });
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
-    const user = await requireUser(request, ["admin", "leader", "buyer"]);
+    const user = await requireUser(request, ["admin", "user"]);
     const { projectId } = await context.params;
     const isCsv = request.headers.get("content-type")?.includes("text/csv");
     const body = isCsv

@@ -15,6 +15,10 @@ export async function POST(request: Request) {
       .from("organization_members").select("organization_id").eq("user_id", uid).limit(1);
     assertSupabaseResult(membershipError);
     if (memberships?.length) throw new Error("ONBOARDING_ALREADY_COMPLETED");
+    const { data: existingOrganizations, error: organizationCountError } = await supabase
+      .from("organizations").select("organization_id").limit(1);
+    assertSupabaseResult(organizationCountError);
+    if (existingOrganizations?.length) throw new Error("ONBOARDING_CLOSED_CONTACT_ADMIN");
     const { data: organization, error: organizationError } = await supabase
       .from("organizations").insert({ name: body.organizationName }).select("organization_id, name").single();
     assertSupabaseResult(organizationError);
@@ -27,4 +31,14 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 400 });
   }
+}
+
+/** Lets the client show the first-admin bootstrap only on a new installation. */
+export async function GET(request: Request) {
+  try {
+    await requireAuthenticatedUser(request);
+    const { data, error } = await supabaseAdmin().from("organizations").select("organization_id").limit(1);
+    assertSupabaseResult(error);
+    return NextResponse.json({ bootstrapAllowed: !(data?.length) });
+  } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 401 }); }
 }

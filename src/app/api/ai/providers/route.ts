@@ -17,7 +17,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const user = await requireUser(request, ["admin", "leader"]);
+    const user = await requireUser(request, ["admin"]);
     const input = providerInputSchema.parse(await request.json());
     return NextResponse.json({ provider: await saveProvider(user.organizationId, input) }, { status: 201 });
   } catch (error) { return failure(error); }

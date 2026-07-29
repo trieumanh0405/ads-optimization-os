@@ -11,7 +11,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const user = await requireUser(request, ["admin", "leader"]);
+    const user = await requireUser(request, ["admin"]);
     return NextResponse.json({ playbook: await savePlaybook(user.organizationId, playbookInputSchema.parse(await request.json())) }, { status: 201 });
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 400 }); }
 }
