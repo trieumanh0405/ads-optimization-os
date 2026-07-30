@@ -55,7 +55,7 @@ type RecommendationView = {
 };
 
 type SourceSyncResponse = {
-  sync: { syncedAt: string; status: "SUCCESS" | "PARTIAL"; accepted: number; rejected: number; latestDataDate: string | null; run: OptimizationRun | null };
+  sync: { syncedAt: string; status: "SUCCESS" | "PARTIAL"; accepted: number; rejected: number; latestDataDate: string | null; run: OptimizationRun | null; skipped?: boolean };
   project: LocalProject;
 };
 
@@ -292,10 +292,13 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
     activeSourceSyncs.current.add(projectId);
     try {
       const response = await team.api<SourceSyncResponse>(`/api/projects/${encodeURIComponent(projectId)}/sync`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({})
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: !silent })
       });
       setWorkspace((current) => upsertProject(current, response.project));
-      if (!silent) notify(`Đã refresh ${response.sync.accepted.toLocaleString("vi-VN")} fact rows${response.sync.run ? " và chạy optimization" : ""}.`);
+      if (!silent) notify(response.sync.skipped
+        ? "Dữ liệu đã được một thành viên khác refresh trong chu kỳ hiện tại."
+        : `Đã refresh ${response.sync.accepted.toLocaleString("vi-VN")} fact rows${response.sync.run ? " và chạy optimization" : ""}.`
+      );
       return response;
     } catch (error) {
       notify(error instanceof Error ? error.message : "GOOGLE_SHEETS_SYNC_FAILED", "error");

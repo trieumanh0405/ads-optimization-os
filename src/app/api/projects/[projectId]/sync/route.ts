@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireUser } from "@/server/auth";
 import { getStoredProjectWorkspace, syncGoogleSheetProject } from "@/server/project-store";
 
-const schema = z.object({ runAfterSync: z.boolean().optional() });
+const schema = z.object({ runAfterSync: z.boolean().optional(), force: z.boolean().optional() });
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {

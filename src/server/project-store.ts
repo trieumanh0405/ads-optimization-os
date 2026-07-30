@@ -201,12 +201,26 @@ export async function finalizeProjectImport(input: {
   return importRecord;
 }
 
-export async function syncGoogleSheetProject(input: { projectId: string; user: AppUser; runAfterSync?: boolean }) {
+export async function syncGoogleSheetProject(input: { projectId: string; user: AppUser; runAfterSync?: boolean; force?: boolean }) {
   await assertProjectAccess(input.projectId, input.user, "import");
   const bundle = await getProjectBundle(input.projectId, input.user);
   const source = bundle.config.dataSource;
   if (source.kind !== "GOOGLE_SHEETS" || !source.spreadsheetId || !source.sheetName) {
     throw new Error("GOOGLE_SHEETS_SOURCE_NOT_CONFIGURED");
+  }
+  const lastSyncTime = source.lastSyncedAt ? Date.parse(source.lastSyncedAt) : Number.NaN;
+  const minimumInterval = source.syncIntervalMinutes * 60_000;
+  if (!input.force && source.lastSyncStatus !== "FAILED" && Number.isFinite(lastSyncTime) && Date.now() - lastSyncTime < minimumInterval) {
+    return {
+      syncedAt: source.lastSyncedAt!,
+      status: source.lastSyncStatus === "PARTIAL" ? "PARTIAL" as const : "SUCCESS" as const,
+      accepted: 0,
+      rejected: 0,
+      latestDataDate: null,
+      importRecord: null,
+      run: null,
+      skipped: true
+    };
   }
   const syncedAt = new Date().toISOString();
   try {
@@ -261,7 +275,8 @@ export async function syncGoogleSheetProject(input: { projectId: string; user: A
       rejected,
       latestDataDate,
       importRecord,
-      run
+      run,
+      skipped: false
     };
   } catch (error) {
     await saveProjectBundle(input.user, {
