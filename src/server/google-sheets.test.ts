@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rowsFromGoogleValues, spreadsheetIdFromInput } from "./google-sheets";
+import { mappingsForGoogleSync, rowsFromGoogleValues, spreadsheetIdFromInput } from "./google-sheets";
 
 describe("Google Sheets connector", () => {
   it("extracts an ID from a shared Google Sheets URL or a raw ID", () => {
@@ -31,5 +31,21 @@ describe("Google Sheets connector", () => {
       ["2026-07-29", "camp-1", "", "100"]
     ], 1);
     expect(output.rows).toHaveLength(1);
+  });
+
+  it("refreshes a default source timestamp on every connector sync", () => {
+    const mappings = mappingsForGoogleSync([
+      { canonicalField: "sourceUpdatedAt", sourceColumn: "__DEFAULT__", required: true, defaultValue: "2026-07-29T00:00:00.000Z" },
+      { canonicalField: "date", sourceColumn: "Day", required: true }
+    ], "2026-07-30T05:00:00.000Z");
+    expect(mappings[0].defaultValue).toBe("2026-07-30T05:00:00.000Z");
+    expect(mappings[1]).toEqual({ canonicalField: "date", sourceColumn: "Day", required: true });
+  });
+
+  it("keeps an explicit source timestamp column unchanged", () => {
+    const mappings = mappingsForGoogleSync([
+      { canonicalField: "sourceUpdatedAt", sourceColumn: "Updated At", required: true }
+    ], "2026-07-30T05:00:00.000Z");
+    expect(mappings[0]).toEqual({ canonicalField: "sourceUpdatedAt", sourceColumn: "Updated At", required: true });
   });
 });

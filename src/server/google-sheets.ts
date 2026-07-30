@@ -1,5 +1,6 @@
 import { createSign } from "node:crypto";
 import { z } from "zod";
+import type { SourceMapping } from "@/core/normalize";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -106,6 +107,17 @@ export function rowsFromGoogleValues(values: unknown[][], headerRow: number) {
     .slice(0, MAX_ROWS)
     .map((line) => Object.fromEntries(headers.map((header, index) => [header, String(line[index] ?? "")]))) as Record<string, string>[];
   return { headers, rows, truncated: dataLines.length > MAX_ROWS };
+}
+
+/** A missing source timestamp means "when this connector read the row", not
+ * "when the mapping profile was first created". Refreshing the default on each
+ * sync prevents a healthy source from becoming stale after the first import. */
+export function mappingsForGoogleSync(mappings: SourceMapping[], syncedAt: string): SourceMapping[] {
+  return mappings.map((mapping) =>
+    mapping.canonicalField === "sourceUpdatedAt" && mapping.sourceColumn === "__DEFAULT__"
+      ? { ...mapping, defaultValue: syncedAt }
+      : mapping
+  );
 }
 
 export async function previewGoogleSheet(input: { spreadsheetInput: string; sheetName?: string; headerRow?: number }): Promise<GoogleSheetPreview> {

@@ -7,7 +7,7 @@ import { canonicalFieldSchema, normalizeRows } from "@/core/normalize";
 import { runOptimizationEngine } from "@/core/engine";
 import { transitionAction, type ActionRecord, type ApprovalStatus } from "@/core/actions";
 import type { LocalProject, OptimizationRun, ImportRecord } from "@/product/types";
-import { previewGoogleSheet } from "./google-sheets";
+import { mappingsForGoogleSync, previewGoogleSheet } from "./google-sheets";
 
 const FACT_PAGE_SIZE = 1_000;
 const MAX_FACT_ROWS = 20_000;
@@ -229,11 +229,12 @@ export async function syncGoogleSheetProject(input: { projectId: string; user: A
       sheetName: source.sheetName,
       headerRow: source.headerRow ?? 1
     });
+    const syncMappings = mappingsForGoogleSync(bundle.mappings, syncedAt);
     const normalized = normalizeRows(preview.rows, {
       projectId: bundle.config.projectId,
       platform: bundle.config.platform,
       accountId: bundle.config.accountId,
-      mappings: bundle.mappings,
+      mappings: syncMappings,
       metricMappings: bundle.metricMappings,
       dimensionMappings: bundle.dimensionMappings
     });
