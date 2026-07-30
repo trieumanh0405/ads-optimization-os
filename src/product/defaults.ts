@@ -211,7 +211,7 @@ export function createProject(input: ProjectCreateInput): LocalProject {
     maxDailyScalePct: 0.2,
     maxDailyScaleActions: 3,
     deferParentScaleWhenChildAction: true,
-    dataSource: { kind: "CSV" }
+    dataSource: { kind: "CSV", autoSyncEnabled: true, syncIntervalMinutes: 60, autoRunAfterSync: true }
   };
 
   return {

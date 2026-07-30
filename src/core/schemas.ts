@@ -56,7 +56,12 @@ export const projectDataSourceSchema = z.object({
   kind: z.enum(["CSV", "GOOGLE_SHEETS"]).default("CSV"),
   spreadsheetId: z.string().min(1).optional(),
   sheetName: z.string().min(1).optional(),
-  headerRow: z.number().int().min(1).max(100).optional()
+  headerRow: z.number().int().min(1).max(100).optional(),
+  autoSyncEnabled: z.boolean().default(true),
+  syncIntervalMinutes: z.number().int().min(30).max(1440).default(60),
+  autoRunAfterSync: z.boolean().default(true),
+  lastSyncedAt: z.string().datetime({ offset: true }).optional(),
+  lastSyncStatus: z.enum(["SUCCESS", "PARTIAL", "FAILED"]).optional()
 });
 
 export const projectConfigSchema = z.object({

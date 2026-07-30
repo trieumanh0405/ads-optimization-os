@@ -124,6 +124,12 @@ export function suggestMappings(
     const sourceColumn = findHeader(headers, candidates);
     return sourceColumn ? [{ dimensionKey, sourceColumn }] : [];
   });
+  if (campaignName && !dimensionMappings.some((item) => item.dimensionKey === "campaignName")) {
+    dimensionMappings.push({ dimensionKey: "campaignName", sourceColumn: campaignName });
+  }
+  if (adsetName && !dimensionMappings.some((item) => item.dimensionKey === "adsetName")) {
+    dimensionMappings.push({ dimensionKey: "adsetName", sourceColumn: adsetName });
+  }
 
   return { mappings, metricMappings, dimensionMappings };
 }

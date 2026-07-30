@@ -22,6 +22,16 @@ export type Recommendation = {
   contextWeightedAchievement: number | null;
   confidence: number;
   executionPhase: 1 | 2 | 3;
+  windowMetrics: Array<{
+    id: WindowId;
+    start: string;
+    endExclusive: string;
+    value: number | null;
+    achievement: number | null;
+    spend: number;
+    result: number | null;
+    rowCount: number;
+  }>;
 };
 
 function matches(value: number, rule: OptimizationRule): boolean {
@@ -106,7 +116,20 @@ export function evaluateEntity(entity: EntityEvidence, all: EntityEvidence[], ru
     evidenceWindow: `Configured: ${config.windows.map((item) => item.id).join(" + ")}`, currentMetric: todayMetric,
     evaluatedValue: null,
     targetMetric: config.target, weightedAchievement: entity.weightedAchievement,
-    contextWeightedAchievement: contextScore, executionPhase: (entity.entityLevel === "AD" ? 1 : entity.entityLevel === "ADSET" ? 2 : 3) as 1 | 2 | 3
+    contextWeightedAchievement: contextScore, executionPhase: (entity.entityLevel === "AD" ? 1 : entity.entityLevel === "ADSET" ? 2 : 3) as 1 | 2 | 3,
+    windowMetrics: config.windows.flatMap((item) => {
+      const window = entity.windows[item.id];
+      return window ? [{
+        id: item.id,
+        start: window.start,
+        endExclusive: window.endExclusive,
+        value: window.value,
+        achievement: window.achievement,
+        spend: window.totals.spend,
+        result: window.totals.result,
+        rowCount: window.rowCount
+      }] : [];
+    })
   };
   if (!relevant.length) return { ...base, recommendedAction: "REVIEW_MANUALLY", adjustmentPct: null, reasonCodes: ["NO_RULES_CONFIGURED"], matchedRuleIds: [], confidence: 0 };
   if (!evidenced.length) return { ...base, recommendedAction: "PENDING_DATA", adjustmentPct: null, reasonCodes: ["MINIMUM_EVIDENCE_NOT_MET"], matchedRuleIds: [], confidence: 0 };

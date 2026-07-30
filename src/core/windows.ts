@@ -10,6 +10,38 @@ export type EntityEvidence = {
   projectWeightedAchievement: number | null;
 };
 
+export function expandFactLevels(facts: FactRow[]): FactRow[] {
+  const expanded = [...facts];
+  const levels = new Set(facts.map((fact) => fact.entityLevel));
+  if (!levels.has("ADSET")) {
+    for (const fact of facts.filter((item) => item.entityLevel === "AD" && item.adsetId)) {
+      expanded.push({
+        ...fact,
+        entityLevel: "ADSET",
+        adId: null,
+        entityName: fact.dimensions.adsetName ?? fact.adsetId ?? "Unknown ad set",
+        sourceRowKey: `${fact.sourceRowKey}|DERIVED_ADSET`
+      });
+    }
+  }
+  if (!levels.has("CAMPAIGN")) {
+    const campaignSource = levels.has("ADSET")
+      ? facts.filter((item) => item.entityLevel === "ADSET")
+      : facts.filter((item) => item.entityLevel === "AD");
+    for (const fact of campaignSource) {
+      expanded.push({
+        ...fact,
+        entityLevel: "CAMPAIGN",
+        adsetId: null,
+        adId: null,
+        entityName: fact.dimensions.campaignName ?? fact.campaignId,
+        sourceRowKey: `${fact.sourceRowKey}|DERIVED_CAMPAIGN`
+      });
+    }
+  }
+  return expanded;
+}
+
 function addDays(date: string, days: number): string {
   const value = new Date(`${date}T00:00:00Z`); value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);
@@ -30,7 +62,7 @@ export function windowBounds(id: WindowId, asOfDate: string, days: number | null
 
 export function buildEntityEvidence(facts: FactRow[], config: ProjectConfig, definition: MetricDefinition, asOfDate: string): EntityEvidence[] {
   const groups = new Map<string, FactRow[]>();
-  for (const row of facts) {
+  for (const row of expandFactLevels(facts)) {
     const key = `${row.entityLevel}|${entityId(row)}`;
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }

@@ -61,6 +61,9 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
   const [spreadsheetInput, setSpreadsheetInput] = useState(project.config.dataSource.spreadsheetId ?? "");
   const [sheetName, setSheetName] = useState(project.config.dataSource.sheetName ?? "");
   const [headerRow, setHeaderRow] = useState(project.config.dataSource.headerRow ?? 1);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(project.config.dataSource.autoSyncEnabled);
+  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState(project.config.dataSource.syncIntervalMinutes);
+  const [autoRunAfterSync, setAutoRunAfterSync] = useState(project.config.dataSource.autoRunAfterSync);
   const [googleSource, setGoogleSource] = useState<GoogleSheetPreview | null>(null);
   const [sourceBusy, setSourceBusy] = useState(false);
   const [entityLevel, setEntityLevel] = useState<FactRow["entityLevel"]>("AD");
@@ -186,8 +189,18 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
           kind: "GOOGLE_SHEETS" as const,
           spreadsheetId: googleSource.spreadsheetId,
           sheetName: googleSource.sheetName,
-          headerRow: googleSource.headerRow
-        } : { kind: "CSV" as const }
+          headerRow: googleSource.headerRow,
+          autoSyncEnabled,
+          syncIntervalMinutes,
+          autoRunAfterSync,
+          lastSyncedAt: new Date().toISOString(),
+          lastSyncStatus: result.errors.length ? "PARTIAL" as const : "SUCCESS" as const
+        } : {
+          kind: "CSV" as const,
+          autoSyncEnabled: false,
+          syncIntervalMinutes,
+          autoRunAfterSync: false
+        }
       };
       if (teamApi) {
         await teamApi("/api/projects", {
@@ -293,6 +306,22 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
             </label>
             <label>Header ở dòng
               <input type="number" min={1} max={100} value={headerRow} onChange={(event) => setHeaderRow(Math.max(1, Number(event.target.value) || 1))} />
+            </label>
+            <label>Tần suất auto refresh
+              <select value={syncIntervalMinutes} disabled={!autoSyncEnabled} onChange={(event) => setSyncIntervalMinutes(Number(event.target.value))}>
+                <option value={30}>30 phút</option>
+                <option value={60}>60 phút · khuyến nghị</option>
+                <option value={180}>3 giờ</option>
+                <option value={360}>6 giờ</option>
+              </select>
+            </label>
+            <label className="checkboxLine">
+              <input type="checkbox" checked={autoSyncEnabled} onChange={(event) => setAutoSyncEnabled(event.target.checked)} />
+              Tự refresh khi tool đang mở
+            </label>
+            <label className="checkboxLine fullWidth">
+              <input type="checkbox" checked={autoRunAfterSync} disabled={!autoSyncEnabled} onChange={(event) => setAutoRunAfterSync(event.target.checked)} />
+              Tự chạy optimization sau khi refresh thành công
             </label>
           </div>
           <div className="cardActions"><span className="helperText">Tool chỉ đọc sheet; không sửa dữ liệu nguồn.</span><button className="primaryAction" disabled={sourceBusy} onClick={() => void loadGoogleSheet()}><RefreshCw size={16} className={sourceBusy ? "spin" : ""} />{sourceBusy ? "Đang quét…" : "Kết nối & quét cột"}</button></div>

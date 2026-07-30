@@ -8,7 +8,7 @@ const recommendation: Recommendation = {
   reasonCodes: ["RULE_AD_OFF"], matchedRuleIds: ["AD_OFF"], evidenceWindow: "TODAY + SHORT",
   currentMetric: 200, targetMetric: 100, evaluatedValue: 0.5,
   weightedAchievement: 0.5, contextWeightedAchievement: 0.6,
-  confidence: 0.8, executionPhase: 1
+  confidence: 0.8, executionPhase: 1, windowMetrics: []
 };
 
 describe("action lifecycle", () => {

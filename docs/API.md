@@ -17,6 +17,7 @@ Stored-project routes and stored AI configuration routes require a Supabase acce
 - `POST /api/normalize` — stateless canonical/supporting-metric/dimension mapping validation
 - `POST /api/projects/{projectId}/import` — normalize and upsert rows using saved mapping
 - `POST /api/projects/{projectId}/sources/google-sheets/preview` — server-side read of a shared Google Sheet, returning headers and raw rows for mapping; requires `GOOGLE_SERVICE_ACCOUNT_JSON`
+- `POST /api/projects/{projectId}/sync` — refresh the project's saved Google Sheets source, normalize/upsert facts, record import QC and optionally run optimization using the latest source date
 
 The stored import route accepts JSON or `Content-Type: text/csv`. For CSV, use `?mode=STRICT` or `?mode=PARTIAL`.
 

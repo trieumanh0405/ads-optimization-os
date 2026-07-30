@@ -22,6 +22,7 @@ export type ImportRecord = {
 export type OptimizationRun = {
   runId: string;
   runAt: string;
+  asOfDate?: string;
   status: "COMPLETED" | "BLOCKED";
   qc: {
     status: "PASS" | "WARNING" | "FAIL";

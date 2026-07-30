@@ -7,6 +7,10 @@ import { canonicalFieldSchema, normalizeRows } from "@/core/normalize";
 import { runOptimizationEngine } from "@/core/engine";
 import { transitionAction, type ActionRecord, type ApprovalStatus } from "@/core/actions";
 import type { LocalProject, OptimizationRun, ImportRecord } from "@/product/types";
+import { previewGoogleSheet } from "./google-sheets";
+
+const FACT_PAGE_SIZE = 1_000;
+const MAX_FACT_ROWS = 20_000;
 
 export const projectBundleSchema = z.object({
   config: projectConfigSchema,
@@ -25,6 +29,22 @@ type ProjectCapability = "view" | "import" | "run" | "editConfig" | "editRules" 
 
 function documentId(key: string) {
   return createHash("sha256").update(key).digest("hex");
+}
+
+async function readStoredFacts(projectId: string, startDate?: string, endDate?: string): Promise<FactRow[]> {
+  const supabase = supabaseAdmin();
+  const facts: FactRow[] = [];
+  for (let offset = 0; offset < MAX_FACT_ROWS; offset += FACT_PAGE_SIZE) {
+    let query = supabase.from("facts").select("data").eq("project_id", projectId).order("date", { ascending: true });
+    if (startDate) query = query.gte("date", startDate);
+    if (endDate) query = query.lte("date", endDate);
+    const { data, error } = await query.range(offset, offset + FACT_PAGE_SIZE - 1);
+    assertSupabaseResult(error);
+    const page = (data ?? []).map((row) => row.data as FactRow);
+    facts.push(...page);
+    if (page.length < FACT_PAGE_SIZE) break;
+  }
+  return facts;
 }
 
 /**
@@ -181,24 +201,98 @@ export async function finalizeProjectImport(input: {
   return importRecord;
 }
 
+export async function syncGoogleSheetProject(input: { projectId: string; user: AppUser; runAfterSync?: boolean }) {
+  await assertProjectAccess(input.projectId, input.user, "import");
+  const bundle = await getProjectBundle(input.projectId, input.user);
+  const source = bundle.config.dataSource;
+  if (source.kind !== "GOOGLE_SHEETS" || !source.spreadsheetId || !source.sheetName) {
+    throw new Error("GOOGLE_SHEETS_SOURCE_NOT_CONFIGURED");
+  }
+  const syncedAt = new Date().toISOString();
+  try {
+    const preview = await previewGoogleSheet({
+      spreadsheetInput: source.spreadsheetId,
+      sheetName: source.sheetName,
+      headerRow: source.headerRow ?? 1
+    });
+    const normalized = normalizeRows(preview.rows, {
+      projectId: bundle.config.projectId,
+      platform: bundle.config.platform,
+      accountId: bundle.config.accountId,
+      mappings: bundle.mappings,
+      metricMappings: bundle.metricMappings,
+      dimensionMappings: bundle.dimensionMappings
+    });
+    for (let index = 0; index < normalized.facts.length; index += 500) {
+      await storeNormalizedFacts({ projectId: input.projectId, user: input.user, facts: normalized.facts.slice(index, index + 500) });
+    }
+    const rejected = new Set(normalized.errors.map((item) => item.row)).size;
+    const importRecord = await finalizeProjectImport({
+      projectId: input.projectId,
+      user: input.user,
+      fileName: `Google Sheets sync · ${preview.spreadsheetTitle} / ${preview.sheetName}`,
+      entityLevel: normalized.facts[0]?.entityLevel ?? "AD",
+      accepted: normalized.facts.length,
+      rejected,
+      mode: "PARTIAL",
+      errorCodes: normalized.errors.map((item) => item.code)
+    });
+    const nextBundle = {
+      ...bundle,
+      config: {
+        ...bundle.config,
+        dataSource: {
+          ...source,
+          lastSyncedAt: syncedAt,
+          lastSyncStatus: rejected ? "PARTIAL" as const : "SUCCESS" as const
+        }
+      }
+    };
+    await saveProjectBundle(input.user, nextBundle);
+    const latestDataDate = normalized.facts.reduce<string | null>((latest, fact) => !latest || fact.date > latest ? fact.date : latest, null);
+    const shouldRun = input.runAfterSync ?? source.autoRunAfterSync;
+    const run = shouldRun && latestDataDate
+      ? await runStoredProject({ projectId: input.projectId, user: input.user, asOfDate: latestDataDate, runAt: syncedAt })
+      : null;
+    return {
+      syncedAt,
+      status: rejected ? "PARTIAL" as const : "SUCCESS" as const,
+      accepted: normalized.facts.length,
+      rejected,
+      latestDataDate,
+      importRecord,
+      run
+    };
+  } catch (error) {
+    await saveProjectBundle(input.user, {
+      ...bundle,
+      config: {
+        ...bundle.config,
+        dataSource: { ...source, lastSyncedAt: syncedAt, lastSyncStatus: "FAILED" }
+      }
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function getStoredProjectWorkspace(projectId: string, user: AppUser): Promise<LocalProject> {
   await assertProjectAccess(projectId, user);
   const supabase = supabaseAdmin();
-  const [{ data: project, error: projectError }, bundle, { data: facts, error: factsError }, { data: actions, error: actionsError }, { data: actionLog, error: actionLogError }, { data: runs, error: runsError }, { data: imports, error: importsError }] = await Promise.all([
+  const [{ data: project, error: projectError }, bundle, facts, { data: actions, error: actionsError }, { data: actionLog, error: actionLogError }, { data: runs, error: runsError }, { data: imports, error: importsError }] = await Promise.all([
     supabase.from("projects").select("created_at, updated_at").eq("project_id", projectId).single(),
     getProjectBundle(projectId, user),
-    supabase.from("facts").select("data").eq("project_id", projectId).order("date", { ascending: false }).limit(20000),
+    readStoredFacts(projectId),
     supabase.from("action_queue").select("data").eq("project_id", projectId).order("run_at", { ascending: false }).limit(1000),
     supabase.from("action_log").select("data").eq("project_id", projectId).order("at", { ascending: false }).limit(5000),
     supabase.from("optimization_runs").select("data").eq("project_id", projectId).order("run_at", { ascending: false }).limit(100),
     supabase.from("import_runs").select("data").eq("project_id", projectId).order("imported_at", { ascending: false }).limit(100)
   ]);
-  assertSupabaseResult(projectError); assertSupabaseResult(factsError); assertSupabaseResult(actionsError);
+  assertSupabaseResult(projectError); assertSupabaseResult(actionsError);
   assertSupabaseResult(actionLogError); assertSupabaseResult(runsError); assertSupabaseResult(importsError);
   if (!project) throw new Error("PROJECT_NOT_FOUND");
   return {
     ...bundle,
-    facts: (facts ?? []).map((row) => row.data as FactRow),
+    facts,
     imports: (imports ?? []).map((row) => row.data as ImportRecord),
     runs: (runs ?? []).map((row) => row.data as OptimizationRun),
     actions: (actions ?? []).map((row) => row.data as ActionRecord),
@@ -211,15 +305,15 @@ export async function runStoredProject(input: { projectId: string; user: AppUser
   await assertProjectAccess(input.projectId, input.user, "run");
   const bundle = await getProjectBundle(input.projectId, input.user);
   const supabase = supabaseAdmin();
-  const [{ data: factRows, error: factError }, { data: actionRows, error: actionError }] = await Promise.all([
-    supabase.from("facts").select("data").eq("project_id", input.projectId).gte("date", bundle.config.startDate).lte("date", input.asOfDate),
+  const [factRows, { data: actionRows, error: actionError }] = await Promise.all([
+    readStoredFacts(input.projectId, bundle.config.startDate, input.asOfDate),
     supabase.from("action_queue").select("data").eq("project_id", input.projectId)
   ]);
-  assertSupabaseResult(factError); assertSupabaseResult(actionError);
+  assertSupabaseResult(actionError);
   const output = runOptimizationEngine({
     asOfDate: input.asOfDate, runAt: input.runAt, config: bundle.config,
     metricDefinitions: bundle.metricDefinitions, rules: bundle.rules,
-    facts: (factRows ?? []).map((row) => row.data as FactRow),
+    facts: factRows,
     priorActions: (actionRows ?? []).map((row) => row.data)
   });
   const { error: runError } = await supabase.from("optimization_runs").upsert({

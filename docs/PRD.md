@@ -112,7 +112,7 @@ The product reduces repetitive spreadsheet work. It does not claim to replace me
 - Automatic Meta Ads on/off or budget mutations.
 - P&L, CRM, creative library or attribution replacement.
 - Universal creative conclusions from CPA alone.
-- Shared team synchronization without Firebase/Auth configuration.
+- Shared team synchronization without Supabase/Auth configuration.
 - Treating Panasonic case numbers as universal benchmarks.
 
 ## 6. Non-functional requirements
@@ -147,21 +147,22 @@ The product reduces repetitive spreadsheet work. It does not claim to replace me
 
 - Complete Browser workspace employee flow.
 - Stateless normalize/optimize/backtest APIs.
-- Optional authenticated Firebase persistence APIs.
+- Authenticated Supabase team workspace with PostgreSQL persistence and project-level permissions.
+- Manual Google Sheets refresh and moderate in-app auto-refresh with optional optimization auto-run.
 - Multi-provider BYOK AI diagnostics.
 - Noti and Panasonic playbooks.
 - Unit/regression tests and browser E2E.
 
 ### Requires organization configuration
 
-- Firebase project, user provisioning and custom claims for shared team mode.
-- Scheduled connector/n8n ingestion.
+- Supabase project, authentication, schema migration and Vercel environment variables.
+- Google service account and Viewer access to each connected raw-data Sheet.
+- Optional always-on connector/n8n/Supabase Cron ingestion when refresh must continue while nobody has the app open.
 - Production access control policy.
 - Real provider API keys.
 
 ### Future
 
-- UI switch from Browser workspace to Firebase team workspace.
-- Scheduled automatic runs.
+- Background 24/7 scheduled synchronization independent of an open browser session.
 - Meta Marketing API execution after SOP/rules are stable.
 - Rule-library master sync and template migrations.

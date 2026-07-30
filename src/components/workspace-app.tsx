@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, Archive, Bot, BrainCircuit, CheckCircle2, ChevronRight,
-  CircleDollarSign, ClipboardCheck, Clock3, CloudOff, Database, Download, FileCheck2,
+  CircleDollarSign, ClipboardCheck, Clock3, Cloud, CloudOff, Database, Download, FileCheck2,
   FileSpreadsheet, Gauge, History, LayoutDashboard, ListChecks, Menu, Play,
   Plus, RefreshCw, Save, Settings2, ShieldAlert, SlidersHorizontal, Sparkles,
   Target, Trash2, Upload, UsersRound, X, XCircle
@@ -42,6 +42,21 @@ type RecommendationView = {
   evaluatedValue: number | null;
   confidence: number;
   executionPhase: number;
+  windowMetrics?: Array<{
+    id: "TODAY" | "SHORT" | "LONG" | "LIFETIME";
+    start: string;
+    endExclusive: string;
+    value: number | null;
+    achievement: number | null;
+    spend: number;
+    result: number | null;
+    rowCount: number;
+  }>;
+};
+
+type SourceSyncResponse = {
+  sync: { syncedAt: string; status: "SUCCESS" | "PARTIAL"; accepted: number; rejected: number; latestDataDate: string | null; run: OptimizationRun | null };
+  project: LocalProject;
 };
 
 const viewMeta: Record<WorkspaceView, { label: string; description: string }> = {
@@ -204,6 +219,7 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
   const [mobileNav, setMobileNav] = useState(false);
   const importWorkspaceInput = useRef<HTMLInputElement>(null);
   const teamSyncTimers = useRef(new Map<string, number>());
+  const activeSourceSyncs = useRef(new Set<string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -250,8 +266,43 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
   const run = project ? latestRun(project) : null;
   const pendingCount = project?.actions.filter((item) => item.approvalStatus === "PENDING").length ?? 0;
 
+  useEffect(() => {
+    if (!hydrated || !team || !project) return;
+    const source = project.config.dataSource;
+    if (source.kind !== "GOOGLE_SHEETS" || !source.autoSyncEnabled || !source.spreadsheetId || !source.sheetName) return;
+    const intervalMs = source.syncIntervalMinutes * 60_000;
+    const lastSync = source.lastSyncedAt ? Date.parse(source.lastSyncedAt) : Number.NaN;
+    const delay = Number.isFinite(lastSync) ? Math.max(5_000, intervalMs - (Date.now() - lastSync)) : 10_000;
+    const timeout = window.setTimeout(() => {
+      void syncProjectFromSource(project.config.projectId, true);
+    }, delay);
+    return () => window.clearTimeout(timeout);
+  }, [hydrated, team?.organizationId, project?.config.projectId, project?.config.dataSource.lastSyncedAt, project?.config.dataSource.autoSyncEnabled, project?.config.dataSource.syncIntervalMinutes]);
+
   function notify(message: string, tone: "success" | "error" = "success") {
     setToast({ message, tone });
+  }
+
+  async function syncProjectFromSource(projectId: string, silent = false): Promise<SourceSyncResponse | null> {
+    if (!team) {
+      if (!silent) notify("Auto refresh cần Team workspace kết nối Supabase.", "error");
+      return null;
+    }
+    if (activeSourceSyncs.current.has(projectId)) return null;
+    activeSourceSyncs.current.add(projectId);
+    try {
+      const response = await team.api<SourceSyncResponse>(`/api/projects/${encodeURIComponent(projectId)}/sync`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({})
+      });
+      setWorkspace((current) => upsertProject(current, response.project));
+      if (!silent) notify(`Đã refresh ${response.sync.accepted.toLocaleString("vi-VN")} fact rows${response.sync.run ? " và chạy optimization" : ""}.`);
+      return response;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "GOOGLE_SHEETS_SYNC_FAILED", "error");
+      return null;
+    } finally {
+      activeSourceSyncs.current.delete(projectId);
+    }
   }
 
   function setView(view: WorkspaceView) {
@@ -380,8 +431,8 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
           })}
         </nav>
         <div className="sidebarFoot">
-          <span className="localMode"><CloudOff size={15} /> Browser workspace</span>
-          <small>IndexedDB · API key chỉ trong session</small>
+          <span className="localMode">{team ? <Cloud size={15} /> : <CloudOff size={15} />}{team ? "Team workspace" : "Browser workspace"}</span>
+          <small>{team ? `${team.email} · Supabase` : "IndexedDB · API key chỉ trong session"}</small>
           <label className="sidebarOperator">
             <span>Operator / reviewer</span>
             <input
@@ -412,8 +463,8 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
             </div>
           </label>
           <div className="topbarActions">
-            <button className="secondaryAction" onClick={exportAll}><Download size={16} /> Export</button>
-            <button className="secondaryAction" onClick={() => importWorkspaceInput.current?.click()}><Upload size={16} /> Restore</button>
+            <button className="secondaryAction" title="Tải bản sao lưu cấu hình và dữ liệu; không chứa API key" onClick={exportAll}><Download size={16} /> Sao lưu JSON</button>
+            {!team && <button className="secondaryAction" title="Khôi phục Browser workspace từ file JSON đã sao lưu" onClick={() => importWorkspaceInput.current?.click()}><Upload size={16} /> Khôi phục JSON</button>}
             {team?.role === "admin" && <button className="secondaryAction" onClick={() => setShowTeamAccess(true)}><UsersRound size={16} /> Team</button>}
             <button className="primaryAction" onClick={() => setShowCreate(true)}><Plus size={16} /> Project mới</button>
             <input
@@ -463,7 +514,7 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
             <RuleManager key={project.config.projectId} project={project} onUpdate={updateProject} notify={notify} />
           )}
           {project && workspace.activeView === "DECISIONS" && (
-            <DecisionBoard key={project.config.projectId} project={project} onUpdate={updateProject} notify={notify} teamApi={team?.api} />
+            <DecisionBoard key={project.config.projectId} project={project} onUpdate={updateProject} notify={notify} teamApi={team?.api} onSync={() => syncProjectFromSource(project.config.projectId)} />
           )}
           {project && workspace.activeView === "ACTIONS" && (
             <ActionQueue key={project.config.projectId} project={project} operatorName={workspace.operatorName} onUpdate={updateProject} notify={notify} teamApi={team?.api} />
@@ -1057,15 +1108,22 @@ function DecisionBoard({
   project,
   onUpdate,
   notify,
-  teamApi
+  teamApi,
+  onSync
 }: {
   project: LocalProject;
   onUpdate: (project: LocalProject, options?: { syncConfig?: boolean }) => void;
   notify: (message: string, tone?: "success" | "error") => void;
   teamApi?: TeamApi;
+  onSync?: () => Promise<SourceSyncResponse | null>;
 }) {
-  const [asOfDate, setAsOfDate] = useState(new Date().toISOString().slice(0, 10));
+  const latestFactDate = project.facts.reduce<string | null>(
+    (latest, fact) => !latest || fact.date > latest ? fact.date : latest,
+    null
+  );
+  const [asOfDate, setAsOfDate] = useState(latestFactDate ?? new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [level, setLevel] = useState<"ALL" | "CAMPAIGN" | "ADSET" | "AD">("ALL");
   const [actionFilter, setActionFilter] = useState("ALL");
   const [search, setSearch] = useState("");
@@ -1077,6 +1135,19 @@ function DecisionBoard({
     && (actionFilter === "ALL" || item.recommendedAction === actionFilter)
     && (!search || `${item.entityName} ${item.entityId}`.toLowerCase().includes(search.toLowerCase()))
   );
+  const source = project.config.dataSource;
+  const canSync = source.kind === "GOOGLE_SHEETS" && Boolean(onSync);
+
+  async function refreshSource() {
+    if (!onSync) return;
+    setSyncing(true);
+    try {
+      const response = await onSync();
+      if (response?.sync.latestDataDate) setAsOfDate(response.sync.latestDataDate);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   async function executeRun() {
     if (!project.facts.length) return notify("Chưa có fact rows. Hãy import data trước.", "error");
@@ -1136,9 +1207,21 @@ function DecisionBoard({
           <span className="sectionKicker">DETERMINISTIC ENGINE</span>
           <strong>Chạy bottom-up: Ad → Ad set → Campaign</strong>
           <small>{project.facts.length.toLocaleString("vi-VN")} fact rows · {project.rules.filter((rule) => rule.enabled).length} rules enabled</small>
+          {source.kind === "GOOGLE_SHEETS" && (
+            <small>
+              Google Sheets · {source.autoSyncEnabled ? `tự refresh mỗi ${source.syncIntervalMinutes} phút khi tool đang mở` : "auto refresh đang tắt"}
+              {source.lastSyncedAt ? ` · lần cuối ${new Date(source.lastSyncedAt).toLocaleString("vi-VN")}` : " · chưa refresh"}
+            </small>
+          )}
         </div>
         <label>As-of date<input type="date" value={asOfDate} onChange={(event) => setAsOfDate(event.target.value)} /></label>
-        <button className="primaryAction large" onClick={executeRun} disabled={busy}>
+        {canSync && (
+          <button className="secondaryAction large" onClick={() => void refreshSource()} disabled={syncing || busy}>
+            <RefreshCw className={syncing ? "spin" : ""} size={17} />
+            {syncing ? "Đang refresh…" : source.autoRunAfterSync ? "Refresh & auto-run" : "Refresh data"}
+          </button>
+        )}
+        <button className="primaryAction large" onClick={executeRun} disabled={busy || syncing}>
           {busy ? <RefreshCw className="spin" size={17} /> : <Play size={17} />}
           {busy ? "Đang chạy…" : "Run optimization"}
         </button>
@@ -1156,7 +1239,7 @@ function DecisionBoard({
           <div>
             <span className="sectionKicker">LATEST RUN</span>
             <h2>Optimization decisions</h2>
-            <p>{run ? `${new Date(run.runAt).toLocaleString("vi-VN")} · ${run.status} · QC ${run.qc.status}` : "Chưa có run."}</p>
+            <p>{run ? `${new Date(run.runAt).toLocaleString("vi-VN")} · dữ liệu đến ${run.asOfDate ?? "N/A"} · ${run.status} · QC ${run.qc.status}` : "Chưa có run."}</p>
           </div>
           <div className="filterBar">
             <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm entity…" />
@@ -1219,6 +1302,28 @@ function DecisionBoard({
               <div><dt>Execution phase</dt><dd>{selected.executionPhase}</dd></div>
               <div><dt>Confidence</dt><dd>{Math.round(selected.confidence * 100)}%</dd></div>
             </dl>
+            {selected.windowMetrics && selected.windowMetrics.length > 0 && (
+              <div className="windowEvidence">
+                <strong>Performance theo time window</strong>
+                <div className="tableScroller">
+                  <table className="dataTable compactTable">
+                    <thead><tr><th>Window</th><th>Khoảng ngày</th><th>KPI</th><th>Achievement</th><th>Spend</th><th>Result</th></tr></thead>
+                    <tbody>
+                      {selected.windowMetrics.map((window) => (
+                        <tr key={window.id}>
+                          <td><strong>{window.id}</strong></td>
+                          <td className="mono smallText">{window.start} → {window.endExclusive}</td>
+                          <td className="mono">{formatNumber(window.value, ["ROAS", "CTR", "CVR"].includes(project.config.primaryMetricKey) ? undefined : project.config.currency)}</td>
+                          <td className="mono">{window.achievement === null ? "N/A" : `${Math.round(window.achievement * 100)}%`}</td>
+                          <td className="mono">{formatNumber(window.spend, project.config.currency)}</td>
+                          <td className="mono">{formatNumber(window.result)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
             <div className="ruleTrace"><strong>Matched rules</strong>{selected.matchedRuleIds.length ? selected.matchedRuleIds.map((id) => <code key={id}>{id}</code>) : <span>Không có rule match</span>}</div>
           </aside>
         </div>
