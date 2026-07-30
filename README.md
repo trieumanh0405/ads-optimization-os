@@ -631,6 +631,8 @@ Mặc định sàn context để scale là 100%. Như vậy một Ad/Ad set tố
 | `TREND` | Signal achievement / Baseline achievement |
 | Dynamic window ID | Điểm hoặc KPI của đúng window được chọn |
 
+Tương thích project cũ: `WEIGHTED` và `CONTEXT_WEIGHTED` được migrate thành `GEOMETRIC` khi engine/UI đọc rule. Từ phiên bản này, chỉ `CONTEXT_GEOMETRIC` mới đọc điểm Context; nhờ vậy Context không còn bị trộn vào Plan score.
+
 ### Tổng hợp từ cấp Ad
 
 Nếu import chỉ có Ad rows nhưng có đầy đủ `campaignId` và `adsetId`, engine tự tạo evidence:

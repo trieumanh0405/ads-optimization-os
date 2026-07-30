@@ -78,4 +78,21 @@ describe("rule guardrails", () => {
     expect(output.recommendedAction).toBe("REVIEW_MANUALLY");
     expect(output.reasonCodes).toContain("WINDOW_RED_FLAG_TODAY");
   });
+  it("migrates legacy CONTEXT_WEIGHTED rules to Plan geometric while keeping Context separate", () => {
+    const item = {
+      ...evidence("ADSET", "ABO"),
+      weightedAchievement: 1.2,
+      projectWeightedAchievement: 0.5
+    };
+    const legacyRule = {
+      ...rule("LEGACY", "KEEP"),
+      scoreSource: "CONTEXT_WEIGHTED",
+      operator: "GTE" as const,
+      thresholdFrom: 1.1
+    };
+    const output = evaluateEntity(item, [item], [legacyRule], config, metric, scope);
+    expect(output.recommendedAction).toBe("KEEP");
+    expect(output.weightedAchievement).toBe(1.2);
+    expect(output.contextWeightedAchievement).toBe(0.5);
+  });
 });

@@ -58,17 +58,29 @@ function evidenceWindowLabel(source: string): string {
   return source.replaceAll("_PLUS_", " + ");
 }
 
+/**
+ * Projects created before the geometric-score migration stored
+ * CONTEXT_WEIGHTED as their default score source. Treat that legacy value as
+ * Plan geometric; Context is now evaluated separately by CONTEXT_GEOMETRIC
+ * and by the scale guardrail.
+ */
+export function canonicalScoreSource(source: string): string {
+  if (source === "WEIGHTED" || source === "CONTEXT_WEIGHTED") return "GEOMETRIC";
+  return source;
+}
+
 function scoreFor(rule: OptimizationRule, entity: EntityEvidence, all: EntityEvidence[]): number | null {
+  const scoreSource = canonicalScoreSource(rule.scoreSource);
   if (rule.evaluationField === "ACHIEVEMENT") {
-    if (["WEIGHTED", "GEOMETRIC", "PLAN_GEOMETRIC"].includes(rule.scoreSource)) return entity.weightedAchievement;
-    if (["CONTEXT_WEIGHTED", "CONTEXT_GEOMETRIC"].includes(rule.scoreSource)) return contextGeometricAchievement(entity, all);
-    if (rule.scoreSource === "COHORT_GEOMETRIC") return entity.cohortWeightedAchievement;
-    if (rule.scoreSource === "MIN_WINDOW") return entity.minimumWindowAchievement;
-    if (rule.scoreSource === "TREND") return entity.trendRatio;
-    return entity.windows[rule.scoreSource as WindowId]?.achievement ?? null;
+    if (["GEOMETRIC", "PLAN_GEOMETRIC"].includes(scoreSource)) return entity.weightedAchievement;
+    if (scoreSource === "CONTEXT_GEOMETRIC") return contextGeometricAchievement(entity, all);
+    if (scoreSource === "COHORT_GEOMETRIC") return entity.cohortWeightedAchievement;
+    if (scoreSource === "MIN_WINDOW") return entity.minimumWindowAchievement;
+    if (scoreSource === "TREND") return entity.trendRatio;
+    return entity.windows[scoreSource as WindowId]?.achievement ?? null;
   }
-  if (["WEIGHTED", "GEOMETRIC", "PLAN_GEOMETRIC", "CONTEXT_WEIGHTED", "CONTEXT_GEOMETRIC", "COHORT_GEOMETRIC", "MIN_WINDOW", "TREND"].includes(rule.scoreSource)) return null;
-  const window = entity.windows[rule.scoreSource as WindowId];
+  if (["GEOMETRIC", "PLAN_GEOMETRIC", "CONTEXT_GEOMETRIC", "COHORT_GEOMETRIC", "MIN_WINDOW", "TREND"].includes(scoreSource)) return null;
+  const window = entity.windows[scoreSource as WindowId];
   if (!window) return null;
   if (rule.evaluationField === "METRIC_VALUE") return window.value;
   if (rule.evaluationField === "SPEND") return window.totals.spend;

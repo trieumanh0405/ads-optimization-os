@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Copy, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { optimizationRuleSchema, type OptimizationRule, type OptimizationScope } from "@/core/schemas";
 import { resolvedScopes } from "@/core/scopes";
+import { canonicalScoreSource } from "@/core/rules";
 import { buildDefaultRules } from "@/product/defaults";
 import type { LocalProject } from "@/product/types";
 
@@ -38,6 +39,10 @@ function blankRule(scope: OptimizationScope): OptimizationRule {
   };
 }
 
+function canonicalRule(rule: OptimizationRule): OptimizationRule {
+  return { ...rule, scoreSource: canonicalScoreSource(rule.scoreSource) };
+}
+
 export function RuleManager({ project, onUpdate, notify }: Props) {
   const scopes = resolvedScopes(project.config);
   const [selectedScopeId, setSelectedScopeId] = useState(scopes[0]?.scopeId ?? "");
@@ -48,10 +53,10 @@ export function RuleManager({ project, onUpdate, notify }: Props) {
     () => scopedRules.find((rule) => rule.id === selectedId) ?? null,
     [scopedRules, selectedId]
   );
-  const [draft, setDraft] = useState<OptimizationRule>(() => selected ?? blankRule(selectedScope));
+  const [draft, setDraft] = useState<OptimizationRule>(() => selected ? canonicalRule(selected) : blankRule(selectedScope));
 
   useEffect(() => {
-    if (selected) setDraft(structuredClone(selected));
+    if (selected) setDraft(structuredClone(canonicalRule(selected)));
   }, [selected]);
 
   function chooseScope(scopeId: string) {
@@ -60,7 +65,7 @@ export function RuleManager({ project, onUpdate, notify }: Props) {
     const first = project.rules.find((rule) => rule.ruleSetId === scope.ruleSetId);
     setSelectedScopeId(scopeId);
     setSelectedId(first?.id ?? null);
-    setDraft(structuredClone(first ?? blankRule(scope)));
+    setDraft(structuredClone(first ? canonicalRule(first) : blankRule(scope)));
   }
 
   function addRule() {
@@ -156,7 +161,7 @@ export function RuleManager({ project, onUpdate, notify }: Props) {
               <span className={`levelPill ${rule.entityLevel.toLowerCase()}`}>{rule.entityLevel}</span>
               <span>
                 <strong>{rule.name ?? rule.id}</strong>
-                <small>{rule.scoreSource} · {rule.operator} {rule.thresholdFrom}</small>
+                <small>{canonicalScoreSource(rule.scoreSource)} · {rule.operator} {rule.thresholdFrom}</small>
               </span>
               <span className={`actionPill action-${rule.actionCode.toLowerCase()}`}>{rule.actionCode}</span>
               <i className={rule.enabled ? "enabledDot" : "disabledDot"} />
