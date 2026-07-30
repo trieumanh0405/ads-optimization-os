@@ -23,8 +23,11 @@ import type {
 import { DataImporter } from "./data-importer";
 import { RuleManager } from "./rule-manager";
 import { AiAnalysisPanel } from "./ai-analysis-panel";
+import { ScopeManager } from "./scope-manager";
 
 type RecommendationView = {
+  scopeId: string;
+  scopeName: string;
   entityLevel: "CAMPAIGN" | "ADSET" | "AD";
   entityId: string;
   entityName: string;
@@ -39,11 +42,19 @@ type RecommendationView = {
   targetMetric: number;
   weightedAchievement: number | null;
   contextWeightedAchievement: number | null;
+  cohortWeightedAchievement: number | null;
+  cohortBenchmark: number | null;
+  minimumWindowAchievement: number | null;
+  trendRatio: number | null;
+  redFlagWindowIds: string[];
   evaluatedValue: number | null;
   confidence: number;
   executionPhase: number;
   windowMetrics?: Array<{
-    id: "TODAY" | "SHORT" | "LONG" | "LIFETIME";
+    id: string;
+    label: string;
+    role: string;
+    includeInScore: boolean;
     start: string;
     endExclusive: string;
     value: number | null;
@@ -960,20 +971,22 @@ function ProjectSetupView({
         </div>
       </section>
 
+      <ScopeManager project={project} onUpdate={onUpdate} notify={notify} />
+
       <section className="sectionCard">
         <div className="sectionHeader">
           <div><span className="sectionKicker">METRIC MODEL</span><h2>KPI và data confidence</h2><p>Project khác KPI chỉ đổi config/mapping; không sửa công thức.</p></div>
         </div>
         <div className="formGrid">
-          <label>Primary KPI
+          <label hidden={project.config.optimizationScopes.length > 0}>Primary KPI
             <select value={project.config.primaryMetricKey} onChange={(event) => patchConfig({ primaryMetricKey: event.target.value })}>
               {project.metricDefinitions.map((metric) => <option key={metric.key} value={metric.key}>{metric.key} · {metric.label}</option>)}
             </select>
           </label>
-          <label>Target
+          <label hidden={project.config.optimizationScopes.length > 0}>Target
             <input type="number" min="0" value={project.config.target} onChange={(event) => patchConfig({ target: Number(event.target.value) })} />
           </label>
-          <label>Result nghĩa là<input value={project.config.optimizationEventLabel} onChange={(event) => patchConfig({ optimizationEventLabel: event.target.value })} /></label>
+          <label hidden={project.config.optimizationScopes.length > 0}>Result nghĩa là<input value={project.config.optimizationEventLabel} onChange={(event) => patchConfig({ optimizationEventLabel: event.target.value })} /></label>
           <label>Sales model
             <select value={project.config.salesModel} onChange={(event) => patchConfig({ salesModel: event.target.value as ProjectConfig["salesModel"] })}>
               <option value="ONLINE_CHECKOUT">Online checkout</option>
@@ -1048,7 +1061,7 @@ function ProjectSetupView({
         </div>
       </section>
 
-      <section className="sectionCard">
+      <section className="sectionCard" hidden={project.config.optimizationScopes.length > 0}>
         <div className="sectionHeader">
           <div><span className="sectionKicker">LOOKBACK & WEIGHTS</span><h2>Cửa sổ dữ liệu</h2><p>Today không nằm trong Short/Long. Missing optional window được renormalize.</p></div>
           <span className={`statusBadge ${Math.abs(weightSum - 1) < 0.0001 ? "success" : "danger"}`}>{Math.round(weightSum * 100)}%</span>
@@ -1071,11 +1084,11 @@ function ProjectSetupView({
 
       <section className="sectionCard">
         <div className="sectionHeader">
-          <div><span className="sectionKicker">GUARDRAILS</span><h2>Context và scale limits</h2><p>Campaign CBO và Ad set ABO mới được tăng/giảm budget. Ad không sở hữu budget.</p></div>
+          <div><span className="sectionKicker">GUARDRAILS</span><h2>Context và scale limits</h2><p>Context được kiểm tra riêng, không nhân vào Entity Score. Campaign CBO và Ad set ABO mới được tăng/giảm budget.</p></div>
         </div>
         <div className="formGrid">
           {(["CAMPAIGN", "ADSET", "AD"] as const).map((level) => (
-            <div className="weightPair" key={level}>
+            <div className="weightPair" key={level} hidden={project.config.optimizationScopes.length > 0}>
               <strong>{level}</strong>
               <label>Entity %<input type="number" min="0" max="100" value={project.config.contextWeights[level].entity * 100} onChange={(event) => {
                 const entity = Number(event.target.value) / 100;
@@ -1254,6 +1267,13 @@ function DecisionBoard({
             </select>
           </div>
         </div>
+        {run?.classificationSummary && (
+          <div className="classificationSummary">
+            <span className="included">PFM được tối ưu: {run.classificationSummary.pfmIncluded.toLocaleString("vi-VN")} dòng</span>
+            <span className="excluded">Non-PFM đã loại: {run.classificationSummary.nonPfmExcluded.toLocaleString("vi-VN")} dòng</span>
+            <span className="review">Chưa phân loại: {run.classificationSummary.reviewUnclassified.toLocaleString("vi-VN")} dòng</span>
+          </div>
+        )}
         {!run ? (
           <div className="emptyState"><Activity size={28} /><strong>Chưa có decision</strong><span>Import data, kiểm tra rules, rồi chạy engine.</span></div>
         ) : run.status === "BLOCKED" ? (
@@ -1264,13 +1284,16 @@ function DecisionBoard({
         ) : (
           <div className="tableScroller">
             <table className="dataTable decisionTable">
-              <thead><tr><th>Entity</th><th>KPI today</th><th>Achievement</th><th>Action</th><th>Adjust</th><th>Confidence</th><th>Rule / reason</th><th /></tr></thead>
+              <thead><tr><th>Entity / scope</th><th>KPI signal</th><th>Plan / Cohort / Context</th><th>Action</th><th>Adjust</th><th>Confidence</th><th>Rule / reason</th><th /></tr></thead>
               <tbody>
                 {filtered.map((item) => (
-                  <tr key={`${item.entityLevel}-${item.entityId}`}>
-                    <td><span className={`levelPill ${item.entityLevel.toLowerCase()}`}>{item.entityLevel}</span><strong>{item.entityName}</strong><small className="mono">{item.entityId}</small></td>
+                  <tr key={`${item.scopeId}-${item.entityLevel}-${item.entityId}`}>
+                    <td><span className={`levelPill ${item.entityLevel.toLowerCase()}`}>{item.entityLevel}</span><strong>{item.entityName}</strong><small>{item.scopeName}</small><small className="mono">{item.entityId}</small></td>
                     <td className="mono">{formatNumber(item.currentMetric, project.config.primaryMetricKey === "ROAS" || ["CTR", "CVR"].includes(project.config.primaryMetricKey) ? undefined : project.config.currency)}<small>Target {formatNumber(item.targetMetric, ["ROAS", "CTR", "CVR"].includes(project.config.primaryMetricKey) ? undefined : project.config.currency)}</small></td>
-                    <td className="mono">{item.contextWeightedAchievement === null ? "N/A" : `${Math.round(item.contextWeightedAchievement * 100)}%`}</td>
+                    <td className="mono">
+                      {item.weightedAchievement === null ? "N/A" : `${Math.round(item.weightedAchievement * 100)}%`}
+                      <small>Cohort {item.cohortWeightedAchievement === null ? "N/A" : `${Math.round(item.cohortWeightedAchievement * 100)}%`} · Context {item.contextWeightedAchievement === null ? "N/A" : `${Math.round(item.contextWeightedAchievement * 100)}%`}</small>
+                    </td>
                     <td><span className={`actionPill action-${item.recommendedAction.toLowerCase()}`}>{actionLabel(item.recommendedAction)}</span></td>
                     <td className="mono">{item.adjustmentPct === null ? "—" : `${item.adjustmentPct > 0 ? "+" : ""}${Math.round(item.adjustmentPct * 100)}%`}</td>
                     <td><span className="confidenceBar"><i style={{ width: `${item.confidence * 100}%` }} /></span><small>{Math.round(item.confidence * 100)}%</small></td>
@@ -1287,7 +1310,7 @@ function DecisionBoard({
       {selected && (
         <div className="modalBackdrop drawerBackdrop" role="presentation" onMouseDown={() => setSelected(null)}>
           <aside className="evidenceDrawer" role="dialog" aria-modal="true" aria-labelledby="evidence-title" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modalTitle"><div><span className="sectionKicker">{selected.entityLevel}</span><h2 id="evidence-title">{selected.entityName}</h2><p className="mono">{selected.entityId}</p></div><button className="iconAction" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></div>
+            <div className="modalTitle"><div><span className="sectionKicker">{selected.entityLevel} · {selected.scopeName}</span><h2 id="evidence-title">{selected.entityName}</h2><p className="mono">{selected.entityId}</p></div><button className="iconAction" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button></div>
             <div className="evidenceSummary">
               <span className={`actionPill action-${selected.recommendedAction.toLowerCase()}`}>{actionLabel(selected.recommendedAction)}</span>
               <strong>{selected.adjustmentPct === null ? "" : `${selected.adjustmentPct > 0 ? "+" : ""}${Math.round(selected.adjustmentPct * 100)}%`}</strong>
@@ -1296,8 +1319,13 @@ function DecisionBoard({
             <dl className="evidenceList">
               <div><dt>KPI today</dt><dd>{formatNumber(selected.currentMetric)}</dd></div>
               <div><dt>Target</dt><dd>{formatNumber(selected.targetMetric)}</dd></div>
-              <div><dt>Window score</dt><dd>{selected.weightedAchievement === null ? "N/A" : `${Math.round(selected.weightedAchievement * 100)}%`}</dd></div>
-              <div><dt>Entity + context</dt><dd>{selected.contextWeightedAchievement === null ? "N/A" : `${Math.round(selected.contextWeightedAchievement * 100)}%`}</dd></div>
+              <div><dt>Plan geometric</dt><dd>{selected.weightedAchievement === null ? "N/A" : `${Math.round(selected.weightedAchievement * 100)}%`}</dd></div>
+              <div><dt>Cohort geometric</dt><dd>{selected.cohortWeightedAchievement === null ? "N/A" : `${Math.round(selected.cohortWeightedAchievement * 100)}%`}</dd></div>
+              <div><dt>Cohort benchmark</dt><dd>{formatNumber(selected.cohortBenchmark)}</dd></div>
+              <div><dt>Project / parent context</dt><dd>{selected.contextWeightedAchievement === null ? "N/A" : `${Math.round(selected.contextWeightedAchievement * 100)}%`}</dd></div>
+              <div><dt>Window thấp nhất</dt><dd>{selected.minimumWindowAchievement === null ? "N/A" : `${Math.round(selected.minimumWindowAchievement * 100)}%`}</dd></div>
+              <div><dt>Trend signal / baseline</dt><dd>{selected.trendRatio === null ? "N/A" : `${Math.round(selected.trendRatio * 100)}%`}</dd></div>
+              <div><dt>Red flag windows</dt><dd>{selected.redFlagWindowIds.length ? selected.redFlagWindowIds.join(", ") : "Không"}</dd></div>
               <div><dt>Evaluated value</dt><dd>{formatNumber(selected.evaluatedValue)}</dd></div>
               <div><dt>Evidence window</dt><dd>{selected.evidenceWindow}</dd></div>
               <div><dt>Budget type</dt><dd>{selected.budgetType}</dd></div>
@@ -1314,7 +1342,7 @@ function DecisionBoard({
                     <tbody>
                       {selected.windowMetrics.map((window) => (
                         <tr key={window.id}>
-                          <td><strong>{window.id}</strong></td>
+                          <td><strong>{window.label || window.id}</strong><small>{window.includeInScore ? `Tính điểm · ${window.role}` : `Bổ trợ · ${window.role}`}</small></td>
                           <td className="mono smallText">{window.start} → {window.endExclusive}</td>
                           <td className="mono">{formatNumber(window.value, ["ROAS", "CTR", "CVR"].includes(project.config.primaryMetricKey) ? undefined : project.config.currency)}</td>
                           <td className="mono">{window.achievement === null ? "N/A" : `${Math.round(window.achievement * 100)}%`}</td>

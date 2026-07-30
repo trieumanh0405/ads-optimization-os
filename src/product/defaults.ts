@@ -1,5 +1,5 @@
 import { standardMetricLibrary } from "@/core/library";
-import type { OptimizationRule, ProjectConfig } from "@/core/schemas";
+import type { OptimizationRule, OptimizationScope, ProjectConfig } from "@/core/schemas";
 import type { AiProviderDraft, LocalProject, ProjectCreateInput, WorkspaceState } from "./types";
 
 export const DEFAULT_PROVIDERS: AiProviderDraft[] = [
@@ -69,8 +69,15 @@ function createRule(input: Omit<OptimizationRule, "ruleSetId" | "version" | "met
   };
 }
 
-export function buildDefaultRules(metricKey: string, ruleSetId: string): OptimizationRule[] {
+export function buildDefaultRules(
+  metricKey: string,
+  ruleSetId: string,
+  windows?: ProjectConfig["windows"]
+): OptimizationRule[] {
   const isCostPerResult = ["CPL", "CPA", "CPQL"].includes(metricKey);
+  const signalWindowId = windows?.find((window) => window.role === "SIGNAL")?.id
+    ?? windows?.[0]?.id
+    ?? "TODAY";
   const rules: OptimizationRule[] = [];
 
   for (const entityLevel of ["CAMPAIGN", "ADSET", "AD"] as const) {
@@ -80,9 +87,9 @@ export function buildDefaultRules(metricKey: string, ruleSetId: string): Optimiz
         name: "Đã tiêu đủ nhưng chưa có kết quả",
         description: "Chặn lãng phí khi entity đã tiêu vượt ngưỡng KPI nhưng chưa tạo ra result.",
         entityLevel,
-        scoreSource: "TODAY",
+        scoreSource: signalWindowId,
         evaluationField: metricKey === "CPQL" ? "QUALIFIED_RESULTS" : "RESULTS",
-        evidenceSource: "TODAY",
+        evidenceSource: signalWindowId,
         minSpendAbsolute: null,
         minSpendTargetMultiple: 1.5,
         minResults: 0,
@@ -100,14 +107,14 @@ export function buildDefaultRules(metricKey: string, ruleSetId: string): Optimiz
       name: "Hiệu suất thấp nghiêm trọng",
       description: "Achievement dưới 70% target sau khi đã đủ bằng chứng.",
       entityLevel,
-      scoreSource: "CONTEXT_WEIGHTED",
+      scoreSource: "GEOMETRIC",
       evaluationField: "ACHIEVEMENT",
-      evidenceSource: "SHORT",
+      evidenceSource: "ALL_SCORE_WINDOWS",
       minSpendAbsolute: isCostPerResult ? null : 1,
       minSpendTargetMultiple: isCostPerResult ? 2 : null,
       minResults: isCostPerResult ? 1 : 0,
       operator: "LT",
-      thresholdFrom: 0.7,
+      thresholdFrom: 0.8,
       thresholdTo: null,
       actionCode: "TURN_OFF",
       actionValue: null,
@@ -119,15 +126,15 @@ export function buildDefaultRules(metricKey: string, ruleSetId: string): Optimiz
       name: "Dưới target, cần can thiệp",
       description: "Achievement từ 70% đến dưới 95%.",
       entityLevel,
-      scoreSource: "CONTEXT_WEIGHTED",
+      scoreSource: "GEOMETRIC",
       evaluationField: "ACHIEVEMENT",
-      evidenceSource: "SHORT",
+      evidenceSource: "ALL_SCORE_WINDOWS",
       minSpendAbsolute: isCostPerResult ? null : 1,
       minSpendTargetMultiple: isCostPerResult ? 1 : null,
       minResults: isCostPerResult ? 1 : 0,
       operator: "BETWEEN",
-      thresholdFrom: 0.7,
-      thresholdTo: 0.95,
+      thresholdFrom: 0.8,
+      thresholdTo: 1.0,
       actionCode: entityLevel === "AD" ? "TURN_OFF" : "DECREASE_BUDGET",
       actionValue: entityLevel === "AD" ? null : -0.15,
       priority: 70
@@ -138,14 +145,14 @@ export function buildDefaultRules(metricKey: string, ruleSetId: string): Optimiz
       name: "Đạt target",
       description: "Achievement từ 95% đến dưới 120%.",
       entityLevel,
-      scoreSource: "CONTEXT_WEIGHTED",
+      scoreSource: "GEOMETRIC",
       evaluationField: "ACHIEVEMENT",
-      evidenceSource: "SHORT",
+      evidenceSource: "ALL_SCORE_WINDOWS",
       minSpendAbsolute: isCostPerResult ? null : 1,
       minSpendTargetMultiple: isCostPerResult ? 0.5 : null,
       minResults: isCostPerResult ? 1 : 0,
       operator: "BETWEEN",
-      thresholdFrom: 0.95,
+      thresholdFrom: 1.0,
       thresholdTo: 1.2,
       actionCode: "KEEP",
       actionValue: null,
@@ -157,9 +164,9 @@ export function buildDefaultRules(metricKey: string, ruleSetId: string): Optimiz
       name: "Vượt target, có thể đầu tư thêm",
       description: "Achievement từ 120% target trở lên và đủ sample.",
       entityLevel,
-      scoreSource: "CONTEXT_WEIGHTED",
+      scoreSource: "GEOMETRIC",
       evaluationField: "ACHIEVEMENT",
-      evidenceSource: "SHORT",
+      evidenceSource: "ALL_SCORE_WINDOWS",
       minSpendAbsolute: isCostPerResult ? null : 1,
       minSpendTargetMultiple: isCostPerResult ? 1 : null,
       minResults: isCostPerResult ? 3 : 0,
@@ -180,6 +187,46 @@ export function createProject(input: ProjectCreateInput): LocalProject {
   const baseId = slugify(input.projectName);
   const projectId = `${baseId}-${Date.now().toString(36).slice(-5)}`;
   const ruleSetId = `${projectId}-rules`;
+  const windows: ProjectConfig["windows"] = [
+    {
+      id: "TODAY", label: "Today", kind: "TODAY", days: null, weight: 0.4,
+      required: false, includeInScore: true, role: "SIGNAL", minSpend: 0,
+      minResults: 0, redFlagThreshold: 0.8
+    },
+    {
+      id: "D3", label: "3 Days", kind: "ROLLING", days: 3, weight: 0.6,
+      required: true, includeInScore: true, role: "CONFIRMATION", minSpend: 0,
+      minResults: 1, redFlagThreshold: 0.8
+    },
+    {
+      id: "D7", label: "7 Days", kind: "ROLLING", days: 7, weight: 0,
+      required: false, includeInScore: false, role: "BASELINE", minSpend: 0,
+      minResults: 1, redFlagThreshold: null
+    }
+  ];
+  const defaultScope: OptimizationScope = {
+    scopeId: "default-pfm",
+    name: input.optimizationEventLabel || "PFM mặc định",
+    enabled: true,
+    primaryMetricKey: input.primaryMetricKey,
+    optimizationEventLabel: input.optimizationEventLabel,
+    planTarget: input.target,
+    ruleSetId,
+    ruleVersion: 1,
+    windows,
+    achievementCap: 2,
+    scaleMinWindowAchievement: 1,
+    contextScaleMinAchievement: 1,
+    cohortBenchmark: {
+      enabled: true,
+      lookbackDays: 14,
+      minEntities: 3,
+      minResults: 5,
+      method: "AGGREGATE",
+      manualValue: null
+    },
+    fallbackClassification: "PFM_INCLUDED"
+  };
   const config: ProjectConfig = {
     projectId,
     projectName: input.projectName,
@@ -197,12 +244,9 @@ export function createProject(input: ProjectCreateInput): LocalProject {
     ruleSetId,
     ruleVersion: 1,
     dataFreshnessHours: 30,
-    windows: [
-      { id: "TODAY", days: null, weight: 0.35, required: false },
-      { id: "SHORT", days: 3, weight: 0.35, required: true },
-      { id: "LONG", days: 7, weight: 0.2, required: false },
-      { id: "LIFETIME", days: null, weight: 0.1, required: false }
-    ],
+    windows,
+    optimizationScopes: [defaultScope],
+    classificationRules: [],
     contextWeights: {
       CAMPAIGN: { entity: 0.7, context: 0.3 },
       ADSET: { entity: 0.65, context: 0.35 },
@@ -217,7 +261,7 @@ export function createProject(input: ProjectCreateInput): LocalProject {
   return {
     config,
     metricDefinitions: standardMetricLibrary,
-    rules: buildDefaultRules(config.primaryMetricKey, ruleSetId),
+    rules: buildDefaultRules(config.primaryMetricKey, ruleSetId, windows),
     mappings: [],
     metricMappings: [],
     dimensionMappings: [],

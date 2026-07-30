@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
-import { optimizationRuleSchema, type OptimizationRule } from "@/core/schemas";
+import { optimizationRuleSchema, type OptimizationRule, type OptimizationScope } from "@/core/schemas";
+import { resolvedScopes } from "@/core/scopes";
 import { buildDefaultRules } from "@/product/defaults";
 import type { LocalProject } from "@/product/types";
 
@@ -12,18 +13,18 @@ type Props = {
   notify: (message: string, tone?: "success" | "error") => void;
 };
 
-function blankRule(project: LocalProject): OptimizationRule {
+function blankRule(scope: OptimizationScope): OptimizationRule {
   return {
     id: `rule-${crypto.randomUUID().slice(0, 8)}`,
     name: "Rule mới",
     description: "",
-    ruleSetId: project.config.ruleSetId,
-    version: project.config.ruleVersion,
+    ruleSetId: scope.ruleSetId,
+    version: scope.ruleVersion,
     entityLevel: "AD",
-    metricKey: project.config.primaryMetricKey,
-    scoreSource: "CONTEXT_WEIGHTED",
+    metricKey: scope.primaryMetricKey,
+    scoreSource: "GEOMETRIC",
     evaluationField: "ACHIEVEMENT",
-    evidenceSource: "SHORT",
+    evidenceSource: "ALL_SCORE_WINDOWS",
     minSpendAbsolute: null,
     minSpendTargetMultiple: null,
     minResults: 1,
@@ -38,19 +39,32 @@ function blankRule(project: LocalProject): OptimizationRule {
 }
 
 export function RuleManager({ project, onUpdate, notify }: Props) {
-  const [selectedId, setSelectedId] = useState(project.rules[0]?.id ?? null);
+  const scopes = resolvedScopes(project.config);
+  const [selectedScopeId, setSelectedScopeId] = useState(scopes[0]?.scopeId ?? "");
+  const selectedScope = scopes.find((scope) => scope.scopeId === selectedScopeId) ?? scopes[0];
+  const scopedRules = project.rules.filter((rule) => rule.ruleSetId === selectedScope.ruleSetId);
+  const [selectedId, setSelectedId] = useState<string | null>(scopedRules[0]?.id ?? null);
   const selected = useMemo(
-    () => project.rules.find((rule) => rule.id === selectedId) ?? null,
-    [project.rules, selectedId]
+    () => scopedRules.find((rule) => rule.id === selectedId) ?? null,
+    [scopedRules, selectedId]
   );
-  const [draft, setDraft] = useState<OptimizationRule>(() => selected ?? blankRule(project));
+  const [draft, setDraft] = useState<OptimizationRule>(() => selected ?? blankRule(selectedScope));
 
   useEffect(() => {
     if (selected) setDraft(structuredClone(selected));
   }, [selected]);
 
+  function chooseScope(scopeId: string) {
+    const scope = scopes.find((item) => item.scopeId === scopeId);
+    if (!scope) return;
+    const first = project.rules.find((rule) => rule.ruleSetId === scope.ruleSetId);
+    setSelectedScopeId(scopeId);
+    setSelectedId(first?.id ?? null);
+    setDraft(structuredClone(first ?? blankRule(scope)));
+  }
+
   function addRule() {
-    const rule = blankRule(project);
+    const rule = blankRule(selectedScope);
     onUpdate({ ...project, rules: [...project.rules, rule], updatedAt: new Date().toISOString() });
     setSelectedId(rule.id);
   }
@@ -69,26 +83,32 @@ export function RuleManager({ project, onUpdate, notify }: Props) {
   function removeRule() {
     if (!selected) return;
     if (!window.confirm(`Xóa rule "${selected.name ?? selected.id}"?`)) return;
-    const next = project.rules.filter((rule) => rule.id !== selected.id);
+    const next = project.rules.filter((rule) =>
+      !(rule.id === selected.id && rule.ruleSetId === selected.ruleSetId)
+    );
     onUpdate({ ...project, rules: next, updatedAt: new Date().toISOString() });
-    setSelectedId(next[0]?.id ?? null);
+    setSelectedId(next.find((rule) => rule.ruleSetId === selectedScope.ruleSetId)?.id ?? null);
     notify("Đã xóa rule.");
   }
 
   function saveRule() {
     const parsed = optimizationRuleSchema.safeParse({
       ...draft,
-      metricKey: project.config.primaryMetricKey,
-      ruleSetId: project.config.ruleSetId,
-      version: project.config.ruleVersion
+      metricKey: selectedScope.primaryMetricKey,
+      ruleSetId: selectedScope.ruleSetId,
+      version: selectedScope.ruleVersion
     });
     if (!parsed.success) {
       notify(parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join(" · "), "error");
       return;
     }
-    const exists = project.rules.some((rule) => rule.id === parsed.data.id);
+    const exists = project.rules.some((rule) =>
+      rule.id === parsed.data.id && rule.ruleSetId === parsed.data.ruleSetId
+    );
     const nextRules = exists
-      ? project.rules.map((rule) => rule.id === parsed.data.id ? parsed.data : rule)
+      ? project.rules.map((rule) =>
+        rule.id === parsed.data.id && rule.ruleSetId === parsed.data.ruleSetId ? parsed.data : rule
+      )
       : [...project.rules, parsed.data];
     onUpdate({ ...project, rules: nextRules, updatedAt: new Date().toISOString() });
     setSelectedId(parsed.data.id);
@@ -96,9 +116,10 @@ export function RuleManager({ project, onUpdate, notify }: Props) {
   }
 
   function resetRules() {
-    if (!window.confirm("Tạo lại toàn bộ rule mặc định theo KPI hiện tại? Rule custom sẽ bị thay thế.")) return;
-    const rules = buildDefaultRules(project.config.primaryMetricKey, project.config.ruleSetId);
-    onUpdate({ ...project, rules, updatedAt: new Date().toISOString() });
+    if (!window.confirm("Tạo lại rule mặc định cho scope đang chọn? Rule custom trong scope này sẽ bị thay thế.")) return;
+    const rules = buildDefaultRules(selectedScope.primaryMetricKey, selectedScope.ruleSetId, selectedScope.windows);
+    const otherRules = project.rules.filter((rule) => rule.ruleSetId !== selectedScope.ruleSetId);
+    onUpdate({ ...project, rules: [...otherRules, ...rules], updatedAt: new Date().toISOString() });
     setSelectedId(rules[0]?.id ?? null);
     notify("Đã tạo lại rule mặc định.");
   }
@@ -112,14 +133,21 @@ export function RuleManager({ project, onUpdate, notify }: Props) {
       <section className="sectionCard rulesList">
         <div className="sectionHeader">
           <div>
-            <span className="sectionKicker">RULE LIBRARY · V{project.config.ruleVersion}</span>
-            <h2>{project.rules.length} rule đang cấu hình</h2>
+            <span className="sectionKicker">RULE LIBRARY · V{selectedScope.ruleVersion}</span>
+            <h2>{scopedRules.length} rule · {selectedScope.name}</h2>
             <p>Rule là record có version; không có magic number trong UI.</p>
           </div>
           <button className="iconAction" onClick={addRule} aria-label="Thêm rule"><Plus size={18} /></button>
         </div>
+        <div className="scopeTabs">
+          {scopes.map((scope) => (
+            <button key={scope.scopeId} className={scope.scopeId === selectedScope.scopeId ? "active" : ""} onClick={() => chooseScope(scope.scopeId)}>
+              <strong>{scope.name}</strong><small>{scope.primaryMetricKey}</small>
+            </button>
+          ))}
+        </div>
         <div className="ruleRows">
-          {project.rules.map((rule) => (
+          {scopedRules.map((rule) => (
             <button
               key={rule.id}
               className={`ruleRow ${selectedId === rule.id ? "active" : ""}`}
@@ -180,22 +208,18 @@ export function RuleManager({ project, onUpdate, notify }: Props) {
           </label>
           <label>Score / metric window
             <select value={draft.scoreSource} onChange={(event) => patch("scoreSource", event.target.value as OptimizationRule["scoreSource"])}>
-              <option value="TODAY">Today</option>
-              <option value="SHORT">Short lookback</option>
-              <option value="LONG">Long lookback</option>
-              <option value="LIFETIME">Lifetime</option>
-              <option value="WEIGHTED">Weighted windows</option>
-              <option value="CONTEXT_WEIGHTED">Entity + parent context</option>
+              <option value="GEOMETRIC">Plan geometric score</option>
+              <option value="COHORT_GEOMETRIC">Cohort geometric score</option>
+              <option value="CONTEXT_GEOMETRIC">Project / parent context</option>
+              <option value="MIN_WINDOW">Window thấp nhất</option>
+              <option value="TREND">Signal / baseline trend</option>
+              {selectedScope.windows.map((window) => <option key={window.id} value={window.id}>{window.label ?? window.id}</option>)}
             </select>
           </label>
           <label>Evidence window
             <select value={draft.evidenceSource} onChange={(event) => patch("evidenceSource", event.target.value as OptimizationRule["evidenceSource"])}>
-              <option value="TODAY">Today</option>
-              <option value="SHORT">Short</option>
-              <option value="LONG">Long</option>
-              <option value="LIFETIME">Lifetime</option>
-              <option value="TODAY_PLUS_SHORT">Today + Short</option>
-              <option value="TODAY_PLUS_LONG">Today + Long</option>
+              <option value="ALL_SCORE_WINDOWS">Tất cả window trong score</option>
+              {selectedScope.windows.map((window) => <option key={window.id} value={window.id}>{window.label ?? window.id}</option>)}
             </select>
           </label>
           <label>Minimum spend tuyệt đối

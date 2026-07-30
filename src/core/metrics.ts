@@ -68,3 +68,34 @@ export function weightedAverage(items: Array<{ value: number | null; weight: num
   if (!available.length || totalWeight <= 0) return null;
   return available.reduce((sum, item) => sum + item.value * item.weight, 0) / totalWeight;
 }
+
+/**
+ * Weighted geometric mean used for stability across time windows.
+ * A zero achievement with sufficient evidence is a real red flag and therefore
+ * collapses the score to zero. Optional missing values are ignored and the
+ * remaining weights are normalized. Values are capped for scoring only so one
+ * exceptional window cannot hide a weak window.
+ */
+export function weightedGeometricMean(
+  items: Array<{ value: number | null; weight: number; required?: boolean }>,
+  cap = 2
+): number | null {
+  if (items.some((item) => item.required && item.value === null)) return null;
+  const available = items.filter((item): item is { value: number; weight: number; required?: boolean } =>
+    item.value !== null && item.value >= 0 && item.weight > 0
+  );
+  const totalWeight = available.reduce((sum, item) => sum + item.weight, 0);
+  if (!available.length || totalWeight <= 0) return null;
+  if (available.some((item) => item.value === 0)) return 0;
+  const logScore = available.reduce((sum, item) =>
+    sum + (item.weight / totalWeight) * Math.log(Math.min(item.value, cap)), 0
+  );
+  return Math.exp(logScore);
+}
+
+export function median(values: number[]): number | null {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}

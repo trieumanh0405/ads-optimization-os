@@ -38,7 +38,15 @@ export const dimensionAliases: Record<string, string[]> = {
   objective: ["objective", "muc tieu"],
   optimizationGoal: ["optimization goal", "performance goal", "muc tieu toi uu"],
   learningStatus: ["learning status", "delivery", "learning phase"],
-  postId: ["post id", "post_id", "creative id"]
+  postId: ["post id", "post_id", "creative id"],
+  campaignObjective: ["4. campaign objective", "campaign objective"],
+  namingObjective: ["5. objective", "naming objective"],
+  funnel: ["7. funnel", "funnel"],
+  product: ["8. products", "products", "product"],
+  kpiMetric: ["9. kpi metrics", "kpi metrics", "kpi metric"],
+  budgetOptimization: ["10. budget optimization", "budget optimization"],
+  performanceGoal: ["21. performance goal", "performance goal"],
+  destination: ["28. destination", "destination"]
 };
 
 function normalized(value: string): string {

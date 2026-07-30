@@ -30,6 +30,9 @@ export const factRowSchema = z.object({
   optimizationGoal: z.string().nullable().default(null),
   learningStatus: z.string().nullable().default(null),
   postId: z.string().nullable().default(null),
+  scopeId: z.string().nullable().optional(),
+  optimizationClass: z.enum(["PFM_INCLUDED", "NON_PFM_EXCLUDED", "REVIEW_UNCLASSIFIED"]).optional(),
+  classificationReason: z.string().nullable().optional(),
   metrics: z.record(z.number().nullable()).default({}),
   dimensions: z.record(z.string().nullable()).default({}),
   sourceUpdatedAt: z.string().datetime({ offset: true }),
@@ -64,6 +67,61 @@ export const projectDataSourceSchema = z.object({
   lastSyncStatus: z.enum(["SUCCESS", "PARTIAL", "FAILED"]).optional()
 });
 
+export const windowConfigSchema = z.object({
+  id: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
+  label: z.string().min(1).optional(),
+  kind: z.enum(["TODAY", "ROLLING", "LIFETIME"]).optional(),
+  days: z.number().int().positive().nullable(),
+  weight: z.number().min(0).max(1),
+  required: z.boolean().default(false),
+  includeInScore: z.boolean().default(true),
+  role: z.enum(["SIGNAL", "CONFIRMATION", "BASELINE", "DIAGNOSTIC"]).default("CONFIRMATION"),
+  minSpend: z.number().nonnegative().default(0),
+  minResults: z.number().nonnegative().default(0),
+  redFlagThreshold: z.number().positive().nullable().default(null)
+});
+
+export const cohortBenchmarkSchema = z.object({
+  enabled: z.boolean().default(true),
+  lookbackDays: z.number().int().positive().default(14),
+  minEntities: z.number().int().positive().default(3),
+  minResults: z.number().nonnegative().default(5),
+  method: z.enum(["AGGREGATE", "MEDIAN"]).default("AGGREGATE"),
+  manualValue: z.number().positive().nullable().default(null)
+});
+
+export const optimizationScopeSchema = z.object({
+  scopeId: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
+  name: z.string().min(1),
+  enabled: z.boolean().default(true),
+  primaryMetricKey: z.string().min(1),
+  optimizationEventLabel: z.string().min(1).default("Result"),
+  planTarget: z.number().positive(),
+  ruleSetId: z.string().min(1),
+  ruleVersion: z.number().int().positive().default(1),
+  windows: z.array(windowConfigSchema).min(1),
+  achievementCap: z.number().positive().default(2),
+  scaleMinWindowAchievement: z.number().positive().default(1),
+  contextScaleMinAchievement: z.number().positive().default(1),
+  cohortBenchmark: cohortBenchmarkSchema.default({
+    enabled: true, lookbackDays: 14, minEntities: 3, minResults: 5,
+    method: "AGGREGATE", manualValue: null
+  }),
+  fallbackClassification: z.enum(["PFM_INCLUDED", "REVIEW_UNCLASSIFIED"]).default("REVIEW_UNCLASSIFIED")
+});
+
+export const classificationRuleSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  field: z.string().min(1),
+  operator: z.enum(["EQUALS", "CONTAINS", "IN", "REGEX"]),
+  values: z.array(z.string().min(1)).min(1),
+  outcome: z.enum(["PFM_INCLUDED", "NON_PFM_EXCLUDED"]),
+  scopeId: z.string().nullable().default(null),
+  priority: z.number().int().default(0),
+  enabled: z.boolean().default(true)
+});
+
 export const projectConfigSchema = z.object({
   projectId: z.string().min(1),
   projectName: z.string().min(1),
@@ -84,12 +142,9 @@ export const projectConfigSchema = z.object({
   ruleSetId: z.string().min(1),
   ruleVersion: z.number().int().positive(),
   dataFreshnessHours: z.number().positive(),
-  windows: z.array(z.object({
-    id: z.enum(["TODAY", "SHORT", "LONG", "LIFETIME"]),
-    days: z.number().int().positive().nullable(),
-    weight: z.number().min(0).max(1),
-    required: z.boolean().default(false)
-  })).min(1),
+  windows: z.array(windowConfigSchema).min(1),
+  optimizationScopes: z.array(optimizationScopeSchema).default([]),
+  classificationRules: z.array(classificationRuleSchema).default([]),
   contextWeights: z.object({
     CAMPAIGN: z.object({ entity: z.number().min(0).max(1), context: z.number().min(0).max(1) }),
     ADSET: z.object({ entity: z.number().min(0).max(1), context: z.number().min(0).max(1) }),
@@ -109,11 +164,11 @@ export const optimizationRuleSchema = z.object({
   version: z.number().int().positive(),
   entityLevel: entityLevelSchema,
   metricKey: z.string().min(1),
-  scoreSource: z.enum(["TODAY", "SHORT", "LONG", "LIFETIME", "WEIGHTED", "CONTEXT_WEIGHTED"]),
+  scoreSource: z.string().min(1),
   evaluationField: z.enum([
     "ACHIEVEMENT", "METRIC_VALUE", "SPEND", "RESULTS", "QUALIFIED_RESULTS", "REVENUE"
   ]).default("ACHIEVEMENT"),
-  evidenceSource: z.enum(["TODAY", "SHORT", "LONG", "LIFETIME", "TODAY_PLUS_SHORT", "TODAY_PLUS_LONG"]).default("SHORT"),
+  evidenceSource: z.string().min(1).default("SHORT"),
   minSpendAbsolute: z.number().nonnegative().nullable().default(null),
   minSpendTargetMultiple: z.number().nonnegative().nullable().default(null),
   minResults: z.number().nonnegative(),
@@ -143,6 +198,9 @@ export const engineRequestSchema = z.object({
 export type FactRow = z.infer<typeof factRowSchema>;
 export type MetricDefinition = z.infer<typeof metricDefinitionSchema>;
 export type ProjectDataSource = z.infer<typeof projectDataSourceSchema>;
+export type WindowConfig = z.infer<typeof windowConfigSchema>;
+export type OptimizationScope = z.infer<typeof optimizationScopeSchema>;
+export type ClassificationRule = z.infer<typeof classificationRuleSchema>;
 export type ProjectConfig = z.infer<typeof projectConfigSchema>;
 export type OptimizationRule = z.infer<typeof optimizationRuleSchema>;
 export type EngineRequest = z.infer<typeof engineRequestSchema>;

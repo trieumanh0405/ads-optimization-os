@@ -8,6 +8,7 @@ import { runOptimizationEngine } from "@/core/engine";
 import { transitionAction, type ActionRecord, type ApprovalStatus } from "@/core/actions";
 import type { LocalProject, OptimizationRun, ImportRecord } from "@/product/types";
 import { mappingsForGoogleSync, previewGoogleSheet } from "./google-sheets";
+import { classifyFacts } from "@/core/scopes";
 
 const FACT_PAGE_SIZE = 1_000;
 const MAX_FACT_ROWS = 20_000;
@@ -145,7 +146,7 @@ export async function importProjectRows(input: { projectId: string; user: AppUse
     mappings: bundle.mappings, metricMappings: bundle.metricMappings, dimensionMappings: bundle.dimensionMappings
   });
   if (input.mode === "STRICT" && normalized.errors.length) return { imported: 0, errors: normalized.errors, status: "REJECTED" as const };
-  const facts = input.mode === "PARTIAL" ? normalized.facts : normalized.facts;
+  const facts = classifyFacts(input.mode === "PARTIAL" ? normalized.facts : normalized.facts, bundle.config);
   if (facts.length) {
     const { error } = await supabaseAdmin().from("facts").upsert(facts.map((fact) => ({
       fact_id: documentId(fact.sourceRowKey), project_id: input.projectId, source_row_key: fact.sourceRowKey,
@@ -170,12 +171,14 @@ export async function storeNormalizedFacts(input: { projectId: string; user: App
   await assertProjectAccess(input.projectId, input.user, "import");
   if (input.facts.some((fact) => fact.projectId !== input.projectId)) throw new Error("FACT_PROJECT_MISMATCH");
   if (!input.facts.length) return { stored: 0 };
-  const { error } = await supabaseAdmin().from("facts").upsert(input.facts.map((fact) => ({
+  const bundle = await getProjectBundle(input.projectId, input.user);
+  const classifiedFacts = classifyFacts(input.facts, bundle.config);
+  const { error } = await supabaseAdmin().from("facts").upsert(classifiedFacts.map((fact) => ({
     fact_id: documentId(fact.sourceRowKey), project_id: input.projectId, source_row_key: fact.sourceRowKey,
     date: fact.date, entity_level: fact.entityLevel, source_updated_at: fact.sourceUpdatedAt, data: fact
   })), { onConflict: "project_id,source_row_key" });
   assertSupabaseResult(error);
-  return { stored: input.facts.length };
+  return { stored: classifiedFacts.length };
 }
 
 export async function finalizeProjectImport(input: {
@@ -238,8 +241,9 @@ export async function syncGoogleSheetProject(input: { projectId: string; user: A
       metricMappings: bundle.metricMappings,
       dimensionMappings: bundle.dimensionMappings
     });
-    for (let index = 0; index < normalized.facts.length; index += 500) {
-      await storeNormalizedFacts({ projectId: input.projectId, user: input.user, facts: normalized.facts.slice(index, index + 500) });
+    const classifiedFacts = classifyFacts(normalized.facts, bundle.config);
+    for (let index = 0; index < classifiedFacts.length; index += 500) {
+      await storeNormalizedFacts({ projectId: input.projectId, user: input.user, facts: classifiedFacts.slice(index, index + 500) });
     }
     const rejected = new Set(normalized.errors.map((item) => item.row)).size;
     const importRecord = await finalizeProjectImport({
@@ -247,7 +251,7 @@ export async function syncGoogleSheetProject(input: { projectId: string; user: A
       user: input.user,
       fileName: `Google Sheets sync · ${preview.spreadsheetTitle} / ${preview.sheetName}`,
       entityLevel: normalized.facts[0]?.entityLevel ?? "AD",
-      accepted: normalized.facts.length,
+      accepted: classifiedFacts.length,
       rejected,
       mode: "PARTIAL",
       errorCodes: normalized.errors.map((item) => item.code)
@@ -264,7 +268,7 @@ export async function syncGoogleSheetProject(input: { projectId: string; user: A
       }
     };
     await saveProjectBundle(input.user, nextBundle);
-    const latestDataDate = normalized.facts.reduce<string | null>((latest, fact) => !latest || fact.date > latest ? fact.date : latest, null);
+    const latestDataDate = classifiedFacts.reduce<string | null>((latest, fact) => !latest || fact.date > latest ? fact.date : latest, null);
     const shouldRun = input.runAfterSync ?? source.autoRunAfterSync;
     const run = shouldRun && latestDataDate
       ? await runStoredProject({ projectId: input.projectId, user: input.user, asOfDate: latestDataDate, runAt: syncedAt })
@@ -272,7 +276,7 @@ export async function syncGoogleSheetProject(input: { projectId: string; user: A
     return {
       syncedAt,
       status: rejected ? "PARTIAL" as const : "SUCCESS" as const,
-      accepted: normalized.facts.length,
+      accepted: classifiedFacts.length,
       rejected,
       latestDataDate,
       importRecord,
@@ -308,7 +312,7 @@ export async function getStoredProjectWorkspace(projectId: string, user: AppUser
   if (!project) throw new Error("PROJECT_NOT_FOUND");
   return {
     ...bundle,
-    facts,
+    facts: classifyFacts(facts, bundle.config),
     imports: (imports ?? []).map((row) => row.data as ImportRecord),
     runs: (runs ?? []).map((row) => row.data as OptimizationRun),
     actions: (actions ?? []).map((row) => row.data as ActionRecord),

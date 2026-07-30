@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FactRow } from "./schemas";
-import { expandFactLevels } from "./windows";
+import { expandFactLevels, windowBounds } from "./windows";
 
 const adFact: FactRow = {
   projectId: "p1", platform: "META", accountId: "a1", date: "2026-07-30", hour: null,
@@ -24,5 +24,24 @@ describe("fact level expansion", () => {
     const explicitAdset = { ...adFact, entityLevel: "ADSET" as const, adId: null, entityName: "Explicit ad set" };
     const expanded = expandFactLevels([adFact, explicitAdset]);
     expect(expanded.filter((item) => item.entityLevel === "ADSET")).toHaveLength(1);
+  });
+
+  it("supports arbitrary rolling windows such as 6D and 14D", () => {
+    expect(windowBounds({
+      id: "D6", label: "6 Days", kind: "ROLLING", days: 6, weight: 0.5,
+      required: true, includeInScore: true, role: "SIGNAL", minSpend: 0,
+      minResults: 0, redFlagThreshold: null
+    }, "2026-07-30", "2026-07-01")).toEqual({
+      start: "2026-07-24",
+      endExclusive: "2026-07-30"
+    });
+    expect(windowBounds({
+      id: "D14", label: "14 Days", kind: "ROLLING", days: 14, weight: 0.5,
+      required: true, includeInScore: true, role: "BASELINE", minSpend: 0,
+      minResults: 0, redFlagThreshold: null
+    }, "2026-07-30", "2026-07-01")).toEqual({
+      start: "2026-07-16",
+      endExclusive: "2026-07-30"
+    });
   });
 });

@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, Plus, RefreshCw, T
 import { parseCsv } from "@/core/csv";
 import type { FactRow } from "@/core/schemas";
 import { normalizeRows, type NormalizeError, type SourceMapping } from "@/core/normalize";
+import { classifyFacts } from "@/core/scopes";
 import { requiredMappingGaps, suggestMappings } from "@/product/mapping";
 import type { LocalProject } from "@/product/types";
 import type { TeamApi } from "@/product/team-api";
@@ -83,6 +84,14 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
     for (const error of errors) counts.set(error.code, (counts.get(error.code) ?? 0) + 1);
     return [...counts.entries()];
   }, [errors]);
+  const classificationSummary = useMemo(() => {
+    const classified = classifyFacts(project.facts, project.config);
+    return {
+      included: classified.filter((fact) => fact.optimizationClass === "PFM_INCLUDED").length,
+      excluded: classified.filter((fact) => fact.optimizationClass === "NON_PFM_EXCLUDED").length,
+      review: classified.filter((fact) => fact.optimizationClass === "REVIEW_UNCLASSIFIED").length
+    };
+  }, [project.config, project.facts]);
 
   function resetSuggestions(nextRows: Record<string, string>[], nextLevel = entityLevel, nextBudget = budgetType) {
     const nextHeaders = nextRows[0] ? Object.keys(nextRows[0]) : [];
@@ -182,7 +191,10 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
         notify(`Strict mode đã chặn import vì có ${result.errors.length} lỗi.`, "error");
         return;
       }
-      const acceptedFacts = mode === "PARTIAL" ? result.facts : result.errors.length ? [] : result.facts;
+      const acceptedFacts = classifyFacts(
+        mode === "PARTIAL" ? result.facts : result.errors.length ? [] : result.facts,
+        project.config
+      );
       const nextConfig = {
         ...project.config,
         dataSource: sourceKind === "GOOGLE_SHEETS" && googleSource ? {
@@ -348,6 +360,13 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
           </label>
         </div>
         <p className="importGuidance"><strong>Strict</strong> chặn cả batch nếu có một dòng lỗi — dùng khi setup nguồn lần đầu. <strong>Partial</strong> chỉ nhập dòng hợp lệ và liệt kê dòng bị bỏ — chỉ dùng sau khi bạn đã kiểm tra mapping. Nếu file ở cấp <strong>Ad</strong> có cả Campaign và Ad set, chỉ cần import một lần; tool tự tổng hợp lên hai cấp cha. CBO = Campaign sở hữu budget, ABO = Ad set sở hữu budget.</p>
+        {project.facts.length > 0 && (
+          <div className="classificationSummary">
+            <span className="included">PFM được tối ưu: {classificationSummary.included.toLocaleString("vi-VN")}</span>
+            <span className="excluded">Non-PFM đã loại: {classificationSummary.excluded.toLocaleString("vi-VN")}</span>
+            <span className="review">Chưa phân loại: {classificationSummary.review.toLocaleString("vi-VN")}</span>
+          </div>
+        )}
       </section>
 
       {rows.length > 0 && (

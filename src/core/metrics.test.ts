@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeMetric, sumFacts } from "./metrics";
+import { computeMetric, sumFacts, weightedGeometricMean } from "./metrics";
 import type { FactRow } from "./schemas";
 
 function fact(overrides: Partial<FactRow> = {}): FactRow {
@@ -67,5 +67,20 @@ describe("metric aggregation", () => {
       direction: "LOWER_IS_BETTER",
       nullWhenDenominatorZero: true
     })).toBe(100);
+  });
+
+  it("uses a weighted geometric mean so a weak window cannot be hidden by a strong one", () => {
+    const score = weightedGeometricMean([
+      { value: 0.1, weight: 0.6 },
+      { value: 2.35, weight: 0.4 }
+    ], 3);
+    expect(score).toBeCloseTo(0.3535, 4);
+  });
+
+  it("returns no score when a required window has insufficient evidence", () => {
+    expect(weightedGeometricMean([
+      { value: 1.2, weight: 0.4 },
+      { value: null, weight: 0.6, required: true }
+    ])).toBeNull();
   });
 });

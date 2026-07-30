@@ -14,8 +14,8 @@ Production: [https://ads-optimization-app.vercel.app](https://ads-optimization-a
 4. [Data contract và mapping](#4-data-contract-và-mapping)
 5. [Nguồn dữ liệu, import và refresh](#5-nguồn-dữ-liệu-import-và-refresh)
 6. [Metric và công thức KPI](#6-metric-và-công-thức-kpi)
-7. [Time window và weighted achievement](#7-time-window-và-weighted-achievement)
-8. [Entity score và context score](#8-entity-score-và-context-score)
+7. [Time window và geometric achievement](#7-time-window-và-geometric-achievement)
+8. [Plan, Cohort và Project Context](#8-plan-cohort-và-project-context)
 9. [Rule engine](#9-rule-engine)
 10. [Rule mặc định](#10-rule-mặc-định)
 11. [Guardrail và confidence](#11-guardrail-và-confidence)
@@ -54,9 +54,12 @@ Google Sheets / CSV / BigQuery trong tương lai
   -> normalize thành FactRow chuẩn
   -> Data QC
   -> tổng hợp Campaign / Ad set / Ad
-  -> tính KPI theo Today / Short / Long / Lifetime
+  -> phân loại PFM / Non-PFM / Review theo naming
+  -> route mỗi row vào Optimization Scope phù hợp
+  -> tính KPI theo các window động của từng scope
   -> quy đổi thành Achievement
-  -> trộn Entity score với Parent/Project context
+  -> tính Plan geometric score
+  -> tính riêng Cohort score và Parent/Project context guardrail
   -> chạy rule theo priority
   -> áp dụng CBO/ABO và scale guardrail
   -> Decision Board
@@ -120,17 +123,18 @@ Không đưa `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` hoặc A
 
 | Khái niệm | Ý nghĩa |
 |---|---|
-| Project/Brand | Một tài khoản hoặc dự án quảng cáo có KPI/rule riêng |
+| Project/Brand | Một tài khoản hoặc dự án quảng cáo, có thể chứa nhiều Optimization Scope |
+| Optimization Scope | Một nhóm PFM có KPI, Plan Target, window, cohort và rule set riêng |
 | Entity | Campaign, Ad set hoặc Ad |
 | Raw row | Một dòng lấy từ Ads Manager/connector |
 | FactRow | Một raw row đã được đổi sang data contract chuẩn |
 | Primary KPI | KPI chính dùng để ra quyết định, ví dụ CPL, CPQL, CPA, ROAS |
 | Target | Mức KPI mục tiêu của project |
-| Window | Khoảng ngày dùng để tổng hợp bằng chứng |
+| Window | Khoảng ngày động dùng để tổng hợp bằng chứng; có thể là 2D, 3D, 5D, 6D, 7D, 14D, 30D... |
 | Achievement | Điểm đã quy đổi để luôn hiểu là “cao hơn = tốt hơn” |
-| Entity score | Achievement tổng hợp của chính entity |
-| Context score | Achievement của parent hoặc toàn project |
-| Decision score | Entity score trộn với context score |
+| Plan geometric score | Trung bình nhân có trọng số của các window được bật `includeInScore` |
+| Cohort score | Điểm entity so với benchmark thực tế của các entity cùng scope |
+| Context score | Điểm geometric của parent hoặc toàn scope/project; dùng làm guardrail riêng |
 | Evidence | Spend/result/metric tối thiểu để rule được phép quyết định |
 | Recommendation | Kết quả engine trên Decision Board |
 | Action | Recommendation cần người dùng xử lý, được đưa vào Action Queue |
@@ -421,7 +425,41 @@ direction: LOWER_IS_BETTER
 
 ---
 
-## 7. Time window và weighted achievement
+## 7. Time window và geometric achievement
+
+### Cấu hình động theo từng Optimization Scope
+
+Window không còn bị gắn cứng vào `Today / 3D / 7D / Lifetime`. Admin có thể tạo bất kỳ tổ hợp nào phù hợp với nhịp chuyển đổi của scope:
+
+```text
+Today + 3D
+3D + 7D
+2D + 5D
+Today + 6D + 14D
+7D + 14D + 30D
+```
+
+Mỗi window có:
+
+```text
+id, label, kind, days, weight, required, includeInScore,
+role, minSpend, minResults, redFlagThreshold
+```
+
+`kind` có ba loại:
+
+- `TODAY`: chỉ ngày `asOfDate`.
+- `ROLLING`: N ngày hoàn tất trước `asOfDate`; không chứa Today để tránh tính trùng ngày đang chạy dở.
+- `LIFETIME`: từ `projectStartDate` đến hết `asOfDate`.
+
+`role` gồm:
+
+- `SIGNAL`: tín hiệu mới nhất, thường là Today hoặc window ngắn.
+- `CONFIRMATION`: xác nhận tín hiệu.
+- `BASELINE`: đường nền để tính trend.
+- `DIAGNOSTIC`: chỉ hiển thị hỗ trợ, không nhất thiết tham gia score.
+
+Chỉ window có `includeInScore = true` và `weight > 0` tham gia điểm Plan. Tổng weight của các window đó phải bằng `1` (100%).
 
 ### Biên thời gian
 
@@ -479,52 +517,90 @@ Ví dụ ROAS target 3:
 | 3,0 | 1,00 = 100% |
 | 4,5 | 1,50 = 150% |
 
-### Default window config
+### Default window config cho project mới
 
 | Window | Days | Weight | Required |
 |---|---:|---:|---:|
-| Today | N/A | 35% | Không |
-| Short | 3 | 35% | Có |
-| Long | 7 | 20% | Không |
-| Lifetime | N/A | 10% | Không |
+| Today | N/A | 40% | Không |
+| 3 Days | 3 | 60% | Có |
+| 7 Days | 7 | 0% | Không; dùng làm baseline/diagnostic |
 
 Tổng weight phải bằng 100%.
 
-### Weighted achievement
+### Weighted geometric mean
 
 ```text
 windowScore =
-  Σ(achievement_i × weight_i)
-  / Σ(weight_i của window có dữ liệu)
+  EXP(
+    Σ(normalizedWeight_i × LN(MIN(achievement_i, achievementCap)))
+  )
+
+Tương đương:
+
+windowScore =
+  Π(MIN(achievement_i, achievementCap) ^ normalizedWeight_i)
 ```
 
-- Optional window bị thiếu: bỏ window đó và renormalize phần weight còn lại.
-- Required window bị thiếu: toàn `windowScore = null`.
+- Optional window thiếu bằng chứng: bỏ window đó và renormalize phần weight còn lại.
+- Required window thiếu bằng chứng: toàn `windowScore = null` và entity chưa đủ dữ liệu.
+- Window đủ bằng chứng nhưng achievement bằng `0`: geometric score bằng `0`.
+- `achievementCap` mặc định là `2` (200%) chỉ áp dụng lúc tính score; KPI thật vẫn giữ nguyên để xem evidence.
 
 Ví dụ:
 
 ```text
-Today achievement = 80%, weight 35%
-Short achievement = 100%, weight 35%
-Long achievement = 120%, weight 20%
-Lifetime thiếu, weight 10% optional
+Today achievement = 10%, weight 60%
+3D achievement = 235%, weight 40%
+achievementCap = 300% trong ví dụ
 
 windowScore
-= (0,8×0,35 + 1,0×0,35 + 1,2×0,20) / (0,35+0,35+0,20)
-= 96,67%
+= 0,10^0,60 × 2,35^0,40
+= 35,35%
 ```
+
+Trung bình cộng của cùng ví dụ bằng 100%, có thể che window 10% bằng window 235%. Trung bình nhân chỉ còn khoảng 35,35%, nên cảnh báo biến động xấu rõ ràng hơn.
+
+Lưu ý: geometric mean không tự đảm bảo “mọi window đều tốt”. Vì vậy engine còn dùng `minimumWindowAchievement` làm guardrail: một window dưới sàn scale vẫn chặn `INCREASE_BUDGET` dù geometric score tổng cao.
 
 ---
 
-## 8. Entity score và context score
+## 8. Plan, Cohort và Project Context
 
-Sau window score, engine áp dụng lớp weight thứ hai:
+Engine giữ ba góc nhìn tách riêng; không cộng hoặc nhân ba score này thành một con số khó giải thích.
+
+### 8.1 Plan geometric score
+
+Đây là điểm chính để rule mặc định quyết định action:
 
 ```text
-decisionScore =
-  entityWindowScore × entityWeight
-  + contextWindowScore × contextWeight
+Plan achievement của từng window
+  -> weighted geometric mean
+  -> Plan geometric score
 ```
+
+Plan Target là cam kết/đích business do admin nhập. Tool không tự đổi Plan Target khi thị trường đắt hơn.
+
+### 8.2 Cohort score
+
+Cohort trả lời: “Entity này có đang tốt hơn mặt bằng thật của các entity PFM cùng scope không?”
+
+Benchmark có thể:
+
+- Nhập tay.
+- `AGGREGATE`: KPI từ tổng Spend / tổng Result của cohort.
+- `MEDIAN`: trung vị KPI của các entity đủ điều kiện.
+
+Admin cấu hình lookback, minimum entities và minimum results. Sau đó engine dùng cùng hệ window để tính achievement so với Cohort Benchmark.
+
+Ứng xử guardrail hiện tại:
+
+- `INCREASE_BUDGET` bị chuyển thành `REVIEW_MANUALLY` nếu Cohort score dưới 100%.
+- Nếu entity dưới Plan nhưng vẫn đạt/tốt hơn Cohort, `TURN_OFF` hoặc `DECREASE_BUDGET` được chuyển thành `REVIEW_MANUALLY`.
+- Cohort không thay Plan; nó giúp tránh tắt một entity đang tương đối tốt trong giai đoạn mặt bằng thị trường xấu.
+
+### 8.3 Project/parent Context guardrail
+
+Context cũng được tính bằng trung bình nhân trên chính bộ window của scope, nhưng giữ độc lập với Plan score.
 
 ### Context theo cấp
 
@@ -534,27 +610,26 @@ decisionScore =
 | Ad set | Parent Campaign, fallback toàn project |
 | Ad | Parent Ad set → Campaign → toàn project |
 
-### Default context weight
-
-| Level | Entity | Context |
-|---|---:|---:|
-| Campaign | 70% | 30% |
-| Ad set | 65% | 35% |
-| Ad | 65% | 35% |
-
-Mỗi cặp phải cộng thành 100%.
-
-Ví dụ:
+Context không “cứu điểm” cho entity bằng phép trung bình cộng. Rule có thể đọc trực tiếp `CONTEXT_GEOMETRIC`, còn default guardrail dùng nó để chặn scale:
 
 ```text
-Ad window score = 80%
-Parent Ad set score = 110%
-Ad context weights = 65% / 35%
-
-decisionScore = 0,8×0,65 + 1,1×0,35 = 90,5%
+Nếu action = INCREASE_BUDGET
+và Context score < contextScaleMinAchievement
+thì action = REVIEW_MANUALLY
 ```
 
-Ý nghĩa: Ad đang kém, nhưng engine vẫn biết parent đang tốt; rule có thể dùng `CONTEXT_WEIGHTED` để tránh đánh giá entity hoàn toàn tách khỏi bối cảnh.
+Mặc định sàn context để scale là 100%. Như vậy một Ad/Ad set tốt riêng lẻ chưa được tăng đầu tư nếu parent hoặc mặt bằng toàn scope đang yếu.
+
+### 8.4 Các score bổ trợ
+
+| Score | Ý nghĩa |
+|---|---|
+| `GEOMETRIC` / `PLAN_GEOMETRIC` | Điểm entity so với Plan |
+| `COHORT_GEOMETRIC` | Điểm entity so với benchmark thực tế cùng scope |
+| `CONTEXT_GEOMETRIC` | Điểm parent/project context |
+| `MIN_WINDOW` | Achievement thấp nhất trong các window tham gia score |
+| `TREND` | Signal achievement / Baseline achievement |
+| Dynamic window ID | Điểm hoặc KPI của đúng window được chọn |
 
 ### Tổng hợp từ cấp Ad
 
@@ -603,16 +678,16 @@ Nếu raw data đã có rows Ad set hoặc Campaign riêng, engine ưu tiên c�
 Ví dụ:
 
 ```text
-scoreSource = CONTEXT_WEIGHTED
+scoreSource = GEOMETRIC
 evaluationField = ACHIEVEMENT
-evidenceSource = SHORT
+evidenceSource = ALL_SCORE_WINDOWS
 minSpendTargetMultiple = 2
 minResults = 1
 operator = LT
 thresholdFrom = 0,7
 ```
 
-Rule chỉ được xét khi Short đã tiêu ít nhất `2 × KPI target` và có ít nhất 1 result. Sau đó mới so `contextWeightedAchievement < 70%`.
+Rule chỉ được xét khi toàn bộ evidence window đã cấu hình đạt minimum spend/result. Sau đó mới so `Plan geometric score < 70%`.
 
 ### Evaluation field
 
@@ -625,7 +700,7 @@ Rule chỉ được xét khi Short đã tiêu ít nhất `2 × KPI target` và c
 | `QUALIFIED_RESULTS` | Tổng qualified result |
 | `REVENUE` | Tổng revenue |
 
-`WEIGHTED` và `CONTEXT_WEIGHTED` chỉ hợp lệ với `ACHIEVEMENT`. Với field khác, score sẽ là `null`.
+`GEOMETRIC`, `COHORT_GEOMETRIC`, `CONTEXT_GEOMETRIC`, `MIN_WINDOW` và `TREND` chỉ hợp lệ với `ACHIEVEMENT`. Với field khác, score sẽ là `null`. Muốn so KPI/Spend/Result thật, chọn đúng dynamic window ID.
 
 ### Operator
 
@@ -668,16 +743,17 @@ Vì vậy không dùng bội số target spend trực tiếp cho ROAS/CTR.
 2. Chạy Data QC.
 3. Nếu có fatal QC: run `BLOCKED`, không tạo recommendation/action.
 4. Bỏ facts sau `asOfDate`.
-5. Tổng hợp hierarchy và windows.
-6. Tính metric, achievement, entity/context score.
-7. Lọc rule đúng set/version/entity/metric và đang enabled.
-8. Kiểm tra minimum evidence.
-9. Match operator/threshold.
-10. Chọn priority cao nhất.
-11. Nếu cùng priority nhưng khác action: `REVIEW_MANUALLY`.
-12. Áp dụng status/budget/scale guardrail.
-13. Sắp thứ tự Ad → Ad set → Campaign.
-14. Tạo Action Queue cho recommendation cần xử lý.
+5. Phân loại row thành `PFM_INCLUDED`, `NON_PFM_EXCLUDED` hoặc `REVIEW_UNCLASSIFIED`.
+6. Route PFM row vào Optimization Scope tương ứng.
+7. Tổng hợp hierarchy và dynamic windows riêng trong từng scope.
+8. Tính KPI, Plan geometric, Cohort geometric, minimum window, trend và Context geometric.
+9. Lọc rule đúng scope/set/version/entity/metric và đang enabled.
+10. Kiểm tra minimum evidence.
+11. Match operator/threshold và chọn priority cao nhất.
+12. Nếu cùng priority nhưng khác action: `REVIEW_MANUALLY`.
+13. Áp dụng status/budget/window/context/cohort/scale guardrail.
+14. Sắp thứ tự Ad → Ad set → Campaign.
+15. Tạo Action Queue cho recommendation cần xử lý.
 
 ---
 
@@ -797,6 +873,11 @@ Confidence là độ mạnh của sample theo rule, không phải xác suất ac
 | `AD_CANNOT_OWN_BUDGET` | Ad không sở hữu budget |
 | `ENTITY_DOES_NOT_OWN_BUDGET` | CBO/ABO không khớp cấp action |
 | `ADJUSTMENT_CAPPED_BY_GUARDRAIL` | % thay đổi bị cap |
+| `MINIMUM_WINDOW_BELOW_SCALE_FLOOR` | Có ít nhất một window thấp hơn sàn scale của scope |
+| `CONTEXT_BELOW_SCALE_GUARDRAIL` | Parent/project context chưa đủ khỏe để scale |
+| `COHORT_BELOW_SCALE_GUARDRAIL` | Entity chưa đạt benchmark Cohort nên chưa tự scale |
+| `BELOW_PLAN_BUT_COMPETITIVE_WITH_COHORT` | Dưới Plan nhưng vẫn bằng/tốt hơn mặt bằng thực tế; chuyển sang review |
+| `WINDOW_RED_FLAG_<WINDOW_ID>` | Một hoặc nhiều window rơi dưới ngưỡng red flag |
 | `DAILY_SCALE_LIMIT_REACHED` | Vượt số scale actions/run |
 | `EXECUTE_CHILD_ACTIONS_FIRST` | Cần xử lý Ad child trước khi scale parent |
 
@@ -820,14 +901,15 @@ Engine có sáu action code:
 ### Decision Board hiển thị
 
 - Entity level, ID và name.
-- KPI Today.
-- Target.
-- Context-weighted achievement.
+- Optimization Scope.
+- KPI Signal window và Plan Target.
+- Plan, Cohort và Context geometric score hiển thị song song.
+- Minimum-window score và trend trong evidence drawer.
 - Action/adjustment.
 - Confidence.
 - Matched rule và reason.
 - Evidence drawer.
-- Performance theo Today/Short/Long/Lifetime.
+- Performance theo toàn bộ dynamic windows đã cấu hình.
 
 `KPI Today = N/A` không có nghĩa toàn entity không có dữ liệu. Có thể Today trống nhưng Short/Long vẫn có evidence.
 
@@ -880,7 +962,9 @@ Evidence hash dùng:
 entityId
 recommendedAction
 currentMetric
-contextWeightedAchievement
+planGeometricAchievement
+cohortGeometricAchievement
+contextGeometricAchievement
 matchedRuleIds
 reasonCodes
 ```
@@ -907,10 +991,13 @@ Fatal issue làm run `BLOCKED`. Warning vẫn cho run tiếp tục.
 | `PROJECT_ID_MISMATCH` | Fatal | Fact thuộc project khác |
 | `ACCOUNT_OR_PLATFORM_MISMATCH` | Fatal | Account/platform fact khác config |
 | `SOURCE_DATA_STALE` | Fatal | `sourceUpdatedAt` vượt freshness hours |
-| `PRIMARY_METRIC_UNDEFINED` | Fatal | Primary KPI không có trong metric dictionary |
-| `TARGET_MULTIPLE_INVALID_FOR_METRIC` | Fatal | Dùng target spend multiple cho metric không phù hợp |
-| `WINDOW_WEIGHTS_NOT_100` | Fatal | Window weights không cộng thành 1 |
-| `CONTEXT_WEIGHTS_*_NOT_100` | Fatal | Entity/context weight không cộng thành 1 |
+| `SCOPE_METRIC_UNDEFINED_<SCOPE_ID>` | Fatal | Primary KPI của scope không có trong metric dictionary |
+| `TARGET_MULTIPLE_INVALID_<SCOPE_ID>` | Fatal | Dùng target spend multiple cho metric không phù hợp |
+| `WINDOW_WEIGHTS_NOT_100_<SCOPE_ID>` | Fatal | Các window tham gia score không cộng thành 1 |
+| `DUPLICATE_WINDOW_IDS_<SCOPE_ID>` | Fatal | Trong scope có hai window dùng cùng ID |
+| `CLASSIFICATION_SCOPE_MISSING` | Fatal | Rule PFM trỏ tới scope đã bị xóa hoặc không tồn tại |
+| `NO_PFM_ROWS_INCLUDED` | Warning | Không có raw row nào được đưa vào scope PFM |
+| `UNCLASSIFIED_ROWS_REQUIRE_REVIEW` | Warning | Có raw row chưa khớp PFM/Non-PFM classifier |
 | `FUTURE_DATED_ROWS` | Warning | Fact sau asOfDate bị bỏ khỏi run |
 
 Import-level error thường gặp:
@@ -939,16 +1026,16 @@ Kiểm tra lần lượt:
 
 1. Project name/platform/account ID.
 2. Timezone/currency/start date.
-3. Primary KPI.
-4. Ý nghĩa Result, ví dụ Lead/Message/Purchase/Booking.
-5. Target.
-6. Sales model/tracking confidence/CAPI.
-7. Metric definitions.
-8. Window days/weights/required.
-9. Entity/context weights.
-10. Freshness hours và scale guardrails.
+3. Các Optimization Scope PFM; mỗi scope có KPI, ý nghĩa Result và Plan Target riêng.
+4. Dynamic windows, role, weight, required, minimum evidence.
+5. Achievement cap và minimum-window scale floor.
+6. Cohort benchmark: lookback, minimum entities/results, Aggregate/Median/manual.
+7. Project/parent Context scale floor.
+8. PFM Classifier: naming field, operator, values, outcome và priority.
+9. Sales model/tracking confidence/CAPI.
+10. Metric definitions, freshness và scale guardrails.
 
-Sau khi đổi Primary KPI, kiểm tra lại toàn bộ rules. Không giả định rules cũ phù hợp KPI mới.
+Sau khi đổi KPI của một scope, kiểm tra lại đúng rule set của scope đó. Không giả định rules cũ phù hợp KPI mới.
 
 ### Data import
 
@@ -965,6 +1052,8 @@ Checklist:
 - Revenue đúng conversion value.
 - `sourceUpdatedAt` hợp lệ.
 - Supporting metrics không bị map trùng nghĩa.
+- Các naming dimension dùng cho classifier, ví dụ `kpiMetric`, `objective`, `funnel`, `product`.
+- Sau import, ba count PFM/Non-PFM/Review đúng với naming thực tế.
 
 Lần đầu dùng Strict. Chỉ dùng Partial sau khi đã hiểu vì sao row bị bỏ.
 
@@ -1201,13 +1290,13 @@ Sau đó đối chiếu:
 1. Tổng Spend/Result từng window.
 2. KPI tính tay.
 3. Achievement tính tay.
-4. Window score.
-5. Parent/project score.
-6. Context-weighted score.
-7. Rule có đủ evidence không.
-8. Rule nào match.
-9. Priority cao nhất.
-10. Guardrail có đổi action không.
+4. Plan geometric score.
+5. Cohort benchmark và Cohort geometric score.
+6. Parent/project Context geometric score.
+7. Minimum window và trend.
+8. Rule có đủ evidence không.
+9. Rule nào match và priority cao nhất.
+10. Guardrail window/context/cohort có đổi action không.
 
 ### Triệu chứng thường gặp
 
@@ -1219,7 +1308,7 @@ Sau đó đối chiếu:
 | Fact count đúng 1.000 | Version cũ hoặc pagination chưa chạy; hard refresh và kiểm tra deployment |
 | Nhiều row lỗi phía cuối Sheet | Formula-only/padding rows, header anchor không nhận diện |
 | KPI Today = N/A | As-of date không có row, denominator 0/null hoặc mapping Result sai |
-| Tất cả Pending Data | Chưa đủ spend/result, Short required bị thiếu, score null hoặc target quá cao |
+| Tất cả Pending Data | Chưa đủ spend/result, một required window bị thiếu, score null hoặc target quá cao |
 | `NO_RULES_CONFIGURED` | KPI/rule metric/version/level không khớp |
 | `NO_RULE_MATCH` | Rule thresholds để hở khoảng |
 | Không đề xuất budget | `budgetType = UNKNOWN/NONE`, sai CBO/ABO, entity inactive hoặc Ad level |
