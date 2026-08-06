@@ -1,20 +1,31 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, FileSpreadsheet, Plus, Trash2, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSpreadsheet, Link2, Plus, RefreshCw, Trash2, UploadCloud } from "lucide-react";
 import { parseCsv } from "@/core/csv";
 import type { FactRow } from "@/core/schemas";
-import type { NormalizeError, SourceMapping } from "@/core/normalize";
-import { apiJson } from "@/product/api";
+import { normalizeRows, type NormalizeError, type SourceMapping } from "@/core/normalize";
+import { classifyFacts } from "@/core/scopes";
 import { requiredMappingGaps, suggestMappings } from "@/product/mapping";
 import type { LocalProject } from "@/product/types";
 import type { TeamApi } from "@/product/team-api";
 
-type NormalizeResponse = {
-  facts: FactRow[];
-  errors: NormalizeError[];
-  accepted: number;
-  rejected: number;
+const IMPORT_BATCH_SIZE = 350;
+
+function inBatches<T>(items: T[], size: number) {
+  const batches: T[][] = [];
+  for (let index = 0; index < items.length; index += size) batches.push(items.slice(index, index + size));
+  return batches;
+}
+
+type GoogleSheetPreview = {
+  spreadsheetId: string;
+  spreadsheetTitle: string;
+  sheetName: string;
+  headerRow: number;
+  headers: string[];
+  rows: Record<string, string>[];
+  truncated: boolean;
 };
 
 type Props = {
@@ -47,6 +58,15 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<Record<string, string>[]>([]);
+  const [sourceKind, setSourceKind] = useState<"CSV" | "GOOGLE_SHEETS">(project.config.dataSource.kind);
+  const [spreadsheetInput, setSpreadsheetInput] = useState(project.config.dataSource.spreadsheetId ?? "");
+  const [sheetName, setSheetName] = useState(project.config.dataSource.sheetName ?? "");
+  const [headerRow, setHeaderRow] = useState(project.config.dataSource.headerRow ?? 1);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(project.config.dataSource.autoSyncEnabled);
+  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState(project.config.dataSource.syncIntervalMinutes);
+  const [autoRunAfterSync, setAutoRunAfterSync] = useState(project.config.dataSource.autoRunAfterSync);
+  const [googleSource, setGoogleSource] = useState<GoogleSheetPreview | null>(null);
+  const [sourceBusy, setSourceBusy] = useState(false);
   const [entityLevel, setEntityLevel] = useState<FactRow["entityLevel"]>("AD");
   const [budgetType, setBudgetType] = useState<FactRow["budgetType"]>("UNKNOWN");
   const [mode, setMode] = useState<"STRICT" | "PARTIAL">("STRICT");
@@ -55,6 +75,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
   const [dimensionMappings, setDimensionMappings] = useState(project.dimensionMappings);
   const [errors, setErrors] = useState<NormalizeError[]>([]);
   const [busy, setBusy] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ completed: number; total: number } | null>(null);
 
   const headers = useMemo(() => rows[0] ? Object.keys(rows[0]) : [], [rows]);
   const gaps = useMemo(() => requiredMappingGaps(mappings), [mappings]);
@@ -63,6 +84,14 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
     for (const error of errors) counts.set(error.code, (counts.get(error.code) ?? 0) + 1);
     return [...counts.entries()];
   }, [errors]);
+  const classificationSummary = useMemo(() => {
+    const classified = classifyFacts(project.facts, project.config);
+    return {
+      included: classified.filter((fact) => fact.optimizationClass === "PFM_INCLUDED").length,
+      excluded: classified.filter((fact) => fact.optimizationClass === "NON_PFM_EXCLUDED").length,
+      review: classified.filter((fact) => fact.optimizationClass === "REVIEW_UNCLASSIFIED").length
+    };
+  }, [project.config, project.facts]);
 
   function resetSuggestions(nextRows: Record<string, string>[], nextLevel = entityLevel, nextBudget = budgetType) {
     const nextHeaders = nextRows[0] ? Object.keys(nextRows[0]) : [];
@@ -75,6 +104,8 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
   async function handleFile(file: File) {
     try {
       const parsed = parseCsv(await file.text());
+      setSourceKind("CSV");
+      setGoogleSource(null);
       setFileName(file.name);
       setRows(parsed);
       setErrors([]);
@@ -82,6 +113,39 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
       notify(`Đã đọc ${parsed.length.toLocaleString("vi-VN")} dòng từ ${file.name}.`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Không đọc được file CSV.", "error");
+    }
+  }
+
+  function chooseSource(next: "CSV" | "GOOGLE_SHEETS") {
+    setSourceKind(next);
+    setRows([]);
+    setFileName("");
+    setErrors([]);
+    setMappings([]);
+  }
+
+  async function loadGoogleSheet() {
+    if (!teamApi) return notify("Google Sheets chỉ hoạt động khi dùng team workspace đã kết nối Supabase.", "error");
+    if (!spreadsheetInput.trim()) return notify("Dán URL hoặc Spreadsheet ID của Google Sheet trước.", "error");
+    setSourceBusy(true);
+    try {
+      const preview = await teamApi<GoogleSheetPreview>(`/api/projects/${encodeURIComponent(project.config.projectId)}/sources/google-sheets/preview`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spreadsheetInput, sheetName: sheetName.trim() || undefined, headerRow })
+      });
+      setGoogleSource(preview);
+      setSpreadsheetInput(preview.spreadsheetId);
+      setSheetName(preview.sheetName);
+      setHeaderRow(preview.headerRow);
+      setFileName(`Google Sheets · ${preview.spreadsheetTitle} / ${preview.sheetName}`);
+      setRows(preview.rows);
+      setErrors([]);
+      resetSuggestions(preview.rows);
+      notify(`Đã đọc ${preview.rows.length.toLocaleString("vi-VN")} dòng và quét ${preview.headers.length} cột từ Google Sheets.${preview.truncated ? " Dữ liệu vượt giới hạn 20.000 dòng; hãy lọc nguồn trước." : ""}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "GOOGLE_SHEETS_PREVIEW_FAILED", "error");
+    } finally {
+      setSourceBusy(false);
     }
   }
 
@@ -102,7 +166,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
   }
 
   async function validateAndImport() {
-    if (!rows.length) return notify("Hãy chọn file CSV trước.", "error");
+    if (!rows.length) return notify(sourceKind === "GOOGLE_SHEETS" ? "Hãy kết nối và quét Google Sheet trước." : "Hãy chọn file CSV trước.", "error");
     if (gaps.length) return notify(`Thiếu mapping bắt buộc: ${gaps.join(", ")}.`, "error");
     const metricKeys = metricMappings.map((item) => item.metricKey.trim());
     const dimensionKeys = dimensionMappings.map((item) => item.dimensionKey.trim());
@@ -114,43 +178,76 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
     }
     setBusy(true);
     try {
-      const result = await apiJson<NormalizeResponse>("/api/normalize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId: project.config.projectId,
-          platform: project.config.platform,
-          accountId: project.config.accountId,
-          mappings,
-          metricMappings,
-          dimensionMappings,
-          rows
-        })
+      const result = normalizeRows(rows, {
+        projectId: project.config.projectId,
+        platform: project.config.platform,
+        accountId: project.config.accountId,
+        mappings,
+        metricMappings,
+        dimensionMappings
       });
       setErrors(result.errors);
       if (mode === "STRICT" && result.errors.length) {
         notify(`Strict mode đã chặn import vì có ${result.errors.length} lỗi.`, "error");
         return;
       }
-      const acceptedFacts = mode === "PARTIAL" ? result.facts : result.errors.length ? [] : result.facts;
+      const acceptedFacts = classifyFacts(
+        mode === "PARTIAL" ? result.facts : result.errors.length ? [] : result.facts,
+        project.config
+      );
+      const nextConfig = {
+        ...project.config,
+        dataSource: sourceKind === "GOOGLE_SHEETS" && googleSource ? {
+          kind: "GOOGLE_SHEETS" as const,
+          spreadsheetId: googleSource.spreadsheetId,
+          sheetName: googleSource.sheetName,
+          headerRow: googleSource.headerRow,
+          autoSyncEnabled,
+          syncIntervalMinutes,
+          autoRunAfterSync,
+          lastSyncedAt: new Date().toISOString(),
+          lastSyncStatus: result.errors.length ? "PARTIAL" as const : "SUCCESS" as const
+        } : {
+          kind: "CSV" as const,
+          autoSyncEnabled: false,
+          syncIntervalMinutes,
+          autoRunAfterSync: false
+        }
+      };
       if (teamApi) {
         await teamApi("/api/projects", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            config: project.config, metricDefinitions: project.metricDefinitions, rules: project.rules,
+            config: nextConfig, metricDefinitions: project.metricDefinitions, rules: project.rules,
             mappings, metricMappings, dimensionMappings
           })
         });
       }
-      const storedImport = teamApi ? await teamApi<{ imported: number; importRecord: LocalProject["imports"][number] }>(`/api/projects/${encodeURIComponent(project.config.projectId)}/import`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows, mode, fileName })
-      }) : null;
+      let storedImport: { importRecord: LocalProject["imports"][number] } | null = null;
+      if (teamApi) {
+        const batches = inBatches(acceptedFacts, IMPORT_BATCH_SIZE);
+        setBatchProgress({ completed: 0, total: batches.length });
+        for (let index = 0; index < batches.length; index += 1) {
+          await teamApi(`/api/projects/${encodeURIComponent(project.config.projectId)}/import`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ facts: batches[index] })
+          });
+          setBatchProgress({ completed: index + 1, total: batches.length });
+        }
+        storedImport = await teamApi<{ importRecord: LocalProject["imports"][number] }>(`/api/projects/${encodeURIComponent(project.config.projectId)}/import`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ finalize: {
+            fileName, entityLevel, accepted: acceptedFacts.length, rejected: new Set(result.errors.map((item) => item.row)).size,
+            mode, errorCodes: [...new Set(result.errors.map((item) => item.code))]
+          } })
+        });
+      }
       const factsByKey = new Map(project.facts.map((fact) => [fact.sourceRowKey, fact]));
       for (const fact of acceptedFacts) factsByKey.set(fact.sourceRowKey, fact);
       const now = new Date().toISOString();
       onUpdate({
         ...project,
+        config: nextConfig,
         facts: [...factsByKey.values()],
         mappings,
         metricMappings,
@@ -161,7 +258,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
           fileName,
           entityLevel,
           accepted: acceptedFacts.length,
-          rejected: result.rejected,
+          rejected: new Set(result.errors.map((item) => item.row)).size,
           mode,
           errorCodes: [...new Set(result.errors.map((item) => item.code))]
         }, ...project.imports].slice(0, 100),
@@ -172,6 +269,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
       notify(error instanceof Error ? error.message : "Import thất bại.", "error");
     } finally {
       setBusy(false);
+      setBatchProgress(null);
     }
   }
 
@@ -184,24 +282,62 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
             <h2>Import và ánh xạ dữ liệu</h2>
             <p>CSV thật được chuẩn hóa trước khi đưa vào engine. Dòng lỗi không bao giờ âm thầm thành số 0.</p>
           </div>
-          <div className="segmented" aria-label="Import mode">
-            <button className={mode === "STRICT" ? "active" : ""} onClick={() => setMode("STRICT")}>Strict</button>
-            <button className={mode === "PARTIAL" ? "active" : ""} onClick={() => setMode("PARTIAL")}>Partial</button>
+          <div className="importControls">
+            <div className="segmented" aria-label="Nguồn dữ liệu">
+              <button className={sourceKind === "CSV" ? "active" : ""} onClick={() => chooseSource("CSV")}>CSV</button>
+              <button className={sourceKind === "GOOGLE_SHEETS" ? "active" : ""} onClick={() => chooseSource("GOOGLE_SHEETS")}>Google Sheets</button>
+            </div>
+            <div className="segmented" aria-label="Import mode">
+              <button className={mode === "STRICT" ? "active" : ""} onClick={() => setMode("STRICT")}>Strict · an toàn</button>
+              <button className={mode === "PARTIAL" ? "active" : ""} onClick={() => setMode("PARTIAL")}>Partial · lọc lỗi</button>
+            </div>
           </div>
         </div>
 
-        <input
-          ref={fileInput}
-          className="visuallyHidden"
-          type="file"
-          accept=".csv,text/csv,text/tab-separated-values"
-          onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])}
-        />
-        <button className="dropZone" onClick={() => fileInput.current?.click()}>
-          <UploadCloud size={28} />
-          <strong>{fileName || "Chọn CSV export từ Ads Manager / connector"}</strong>
-          <span>{rows.length ? `${rows.length.toLocaleString("vi-VN")} dòng · ${headers.length} cột` : "Hỗ trợ dấu phẩy, chấm phẩy và tab"}</span>
-        </button>
+        {sourceKind === "CSV" ? <>
+          <input
+            ref={fileInput}
+            className="visuallyHidden"
+            type="file"
+            accept=".csv,text/csv,text/tab-separated-values"
+            onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])}
+          />
+          <button className="dropZone" onClick={() => fileInput.current?.click()}>
+            <UploadCloud size={28} />
+            <strong>{fileName || "Chọn CSV export từ Ads Manager / connector"}</strong>
+            <span>{rows.length ? `${rows.length.toLocaleString("vi-VN")} dòng · ${headers.length} cột` : "Hỗ trợ dấu phẩy, chấm phẩy và tab"}</span>
+          </button>
+        </> : <section className="googleSourcePanel" aria-label="Kết nối Google Sheets">
+          <div className="googleSourceTitle"><Link2 size={20} /><span><strong>Google Sheets online</strong><small>Sheet phải được share Viewer cho email Service Account của tool.</small></span></div>
+          <div className="formGrid compact">
+            <label className="fullWidth">Google Sheets URL hoặc Spreadsheet ID
+              <input value={spreadsheetInput} onChange={(event) => setSpreadsheetInput(event.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..." />
+            </label>
+            <label>Tên tab raw (bỏ trống = tab đầu tiên)
+              <input value={sheetName} onChange={(event) => setSheetName(event.target.value)} placeholder="RAW_ADS" />
+            </label>
+            <label>Header ở dòng
+              <input type="number" min={1} max={100} value={headerRow} onChange={(event) => setHeaderRow(Math.max(1, Number(event.target.value) || 1))} />
+            </label>
+            <label>Tần suất auto refresh
+              <select value={syncIntervalMinutes} disabled={!autoSyncEnabled} onChange={(event) => setSyncIntervalMinutes(Number(event.target.value))}>
+                <option value={30}>30 phút</option>
+                <option value={60}>60 phút · khuyến nghị</option>
+                <option value={180}>3 giờ</option>
+                <option value={360}>6 giờ</option>
+              </select>
+            </label>
+            <label className="checkboxLine">
+              <input type="checkbox" checked={autoSyncEnabled} onChange={(event) => setAutoSyncEnabled(event.target.checked)} />
+              Tự refresh khi tool đang mở
+            </label>
+            <label className="checkboxLine fullWidth">
+              <input type="checkbox" checked={autoRunAfterSync} disabled={!autoSyncEnabled} onChange={(event) => setAutoRunAfterSync(event.target.checked)} />
+              Tự chạy optimization sau khi refresh thành công
+            </label>
+          </div>
+          <div className="cardActions"><span className="helperText">Tool chỉ đọc sheet; không sửa dữ liệu nguồn.</span><button className="primaryAction" disabled={sourceBusy} onClick={() => void loadGoogleSheet()}><RefreshCw size={16} className={sourceBusy ? "spin" : ""} />{sourceBusy ? "Đang quét…" : "Kết nối & quét cột"}</button></div>
+        </section>}
 
         <div className="formGrid compact topGap">
           <label>Cấp dữ liệu
@@ -223,6 +359,14 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
             <input value={project.config.projectName} readOnly />
           </label>
         </div>
+        <p className="importGuidance"><strong>Strict</strong> chặn cả batch nếu có một dòng lỗi — dùng khi setup nguồn lần đầu. <strong>Partial</strong> chỉ nhập dòng hợp lệ và liệt kê dòng bị bỏ — chỉ dùng sau khi bạn đã kiểm tra mapping. Nếu file ở cấp <strong>Ad</strong> có cả Campaign và Ad set, chỉ cần import một lần; tool tự tổng hợp lên hai cấp cha. CBO = Campaign sở hữu budget, ABO = Ad set sở hữu budget.</p>
+        {project.facts.length > 0 && (
+          <div className="classificationSummary">
+            <span className="included">PFM được tối ưu: {classificationSummary.included.toLocaleString("vi-VN")}</span>
+            <span className="excluded">Non-PFM đã loại: {classificationSummary.excluded.toLocaleString("vi-VN")}</span>
+            <span className="review">Chưa phân loại: {classificationSummary.review.toLocaleString("vi-VN")}</span>
+          </div>
+        )}
       </section>
 
       {rows.length > 0 && (
@@ -331,7 +475,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
             <span className="helperText">Strict: có 1 lỗi thì không lưu batch. Partial: chỉ lưu dòng hợp lệ.</span>
             <button className="primaryAction" disabled={busy || gaps.length > 0} onClick={validateAndImport}>
               <FileSpreadsheet size={17} />
-              {busy ? "Đang chuẩn hóa…" : "Validate & import"}
+              {busy ? batchProgress ? `Đang lưu ${batchProgress.completed}/${batchProgress.total} batch…` : "Đang chuẩn hóa…" : "Validate & import"}
             </button>
           </div>
         </section>

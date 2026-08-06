@@ -22,6 +22,7 @@ export type ImportRecord = {
 export type OptimizationRun = {
   runId: string;
   runAt: string;
+  asOfDate?: string;
   status: "COMPLETED" | "BLOCKED";
   qc: {
     status: "PASS" | "WARNING" | "FAIL";
@@ -31,6 +32,11 @@ export type OptimizationRun = {
   evidence: Array<Record<string, unknown>>;
   recommendations: Array<Record<string, unknown>>;
   actions: ActionRecord[];
+  classificationSummary?: {
+    pfmIncluded: number;
+    nonPfmExcluded: number;
+    reviewUnclassified: number;
+  };
 };
 
 export type LocalProject = {

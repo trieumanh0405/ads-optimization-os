@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/server/auth";
-import { getProjectBundle } from "@/server/project-store";
+import { deleteStoredProject, getProjectBundle } from "@/server/project-store";
 
 export async function GET(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
@@ -8,4 +8,13 @@ export async function GET(request: Request, context: { params: Promise<{ project
     const { projectId } = await context.params;
     return NextResponse.json(await getProjectBundle(projectId, user));
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 404 }); }
+}
+
+export async function DELETE(request: Request, context: { params: Promise<{ projectId: string }> }) {
+  try {
+    const user = await requireUser(request);
+    const { projectId } = await context.params;
+    await deleteStoredProject(projectId, user);
+    return NextResponse.json({ deleted: true });
+  } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "UNKNOWN_ERROR" }, { status: 403 }); }
 }

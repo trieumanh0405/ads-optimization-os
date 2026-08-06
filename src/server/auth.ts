@@ -1,6 +1,8 @@
 import { assertSupabaseResult, supabaseAdmin } from "./supabase-admin";
 
-export type AppUser = { uid: string; organizationId: string; role: "admin" | "leader" | "buyer" | "reviewer" };
+/** The product deliberately exposes only two roles. Older database values are
+ * normalized to `user` while we keep the original enum for migration safety. */
+export type AppUser = { uid: string; organizationId: string; role: "admin" | "user" };
 
 export async function requireAuthenticatedUser(request: Request): Promise<{ uid: string }> {
   const token = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
@@ -29,8 +31,8 @@ export async function requireUser(request: Request, roles?: AppUser["role"][]): 
   if (!requestedOrganizationId && memberships.length > 1) throw new Error("AUTH_ORGANIZATION_HEADER_REQUIRED");
   const membership = memberships[0];
   const organizationId = membership.organization_id;
-  const role = membership.role as AppUser["role"];
-  if (!organizationId || !["admin", "leader", "buyer", "reviewer"].includes(role)) throw new Error("AUTH_ROLE_INVALID");
+  const role = membership.role === "admin" ? "admin" : "user";
+  if (!organizationId) throw new Error("AUTH_ROLE_INVALID");
   if (roles && !roles.includes(role)) throw new Error("AUTH_FORBIDDEN");
   return { uid, organizationId, role };
 }

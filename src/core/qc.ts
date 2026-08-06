@@ -1,5 +1,6 @@
 import type { EngineRequest, FactRow } from "./schemas";
 import { entityId } from "./windows";
+import { classifyFacts, resolvedScopes } from "./scopes";
 
 export type QcIssue = { code: string; severity: "FATAL" | "WARNING"; message: string; sourceRowKeys?: string[] };
 export type QcResult = { status: "PASS" | "WARNING" | "FAIL"; issues: QcIssue[]; latestSourceUpdateAt: string | null };
@@ -29,17 +30,42 @@ export function runDataQualityChecks(request: EngineRequest): QcResult {
   }
   const futureRows = request.facts.filter((row) => row.date > request.asOfDate).map((row) => row.sourceRowKey);
   if (futureRows.length) issues.push({ code: "FUTURE_DATED_ROWS", severity: "WARNING", message: `${futureRows.length} rows are after asOfDate and will be ignored.`, sourceRowKeys: futureRows });
-  const activeDefinition = request.metricDefinitions.find((item) => item.key === request.config.primaryMetricKey);
-  if (!activeDefinition) issues.push({ code: "PRIMARY_METRIC_UNDEFINED", severity: "FATAL", message: "primaryMetricKey is not present in metricDefinitions." });
-  if (activeDefinition && request.rules.some((rule) => (rule.minSpendTargetMultiple ?? 0) > 0)
-    && !(activeDefinition.kind === "RATIO" && activeDefinition.numerator === "spend" && activeDefinition.direction === "LOWER_IS_BETTER")) {
-    issues.push({ code: "TARGET_MULTIPLE_INVALID_FOR_METRIC", severity: "FATAL", message: "minSpendTargetMultiple can only be used for lower-is-better cost ratios such as CPL/CPA/CPQL." });
+  const scopes = resolvedScopes(request.config);
+  for (const scope of scopes) {
+    const activeDefinition = request.metricDefinitions.find((item) => item.key === scope.primaryMetricKey);
+    if (!activeDefinition) {
+      issues.push({ code: `SCOPE_METRIC_UNDEFINED_${scope.scopeId}`, severity: "FATAL", message: `${scope.name}: primary metric ${scope.primaryMetricKey} is undefined.` });
+      continue;
+    }
+    const scopeRules = request.rules.filter((rule) => rule.ruleSetId === scope.ruleSetId && rule.version === scope.ruleVersion);
+    if (scopeRules.some((rule) => (rule.minSpendTargetMultiple ?? 0) > 0)
+      && !(activeDefinition.kind === "RATIO" && activeDefinition.numerator === "spend" && activeDefinition.direction === "LOWER_IS_BETTER")) {
+      issues.push({ code: `TARGET_MULTIPLE_INVALID_${scope.scopeId}`, severity: "FATAL", message: `${scope.name}: target spend multiple is only valid for lower-is-better cost ratios.` });
+    }
+    const scoredWindows = scope.windows.filter((window) => window.includeInScore && window.weight > 0);
+    const windowWeight = scoredWindows.reduce((sum, item) => sum + item.weight, 0);
+    if (!scoredWindows.length || Math.abs(windowWeight - 1) > 0.0001) {
+      issues.push({ code: `WINDOW_WEIGHTS_NOT_100_${scope.scopeId}`, severity: "FATAL", message: `${scope.name}: scored window weights sum to ${windowWeight}, expected 1.` });
+    }
+    if (new Set(scope.windows.map((window) => window.id)).size !== scope.windows.length) {
+      issues.push({ code: `DUPLICATE_WINDOW_IDS_${scope.scopeId}`, severity: "FATAL", message: `${scope.name}: window IDs must be unique.` });
+    }
   }
-  const windowWeight = request.config.windows.reduce((sum, item) => sum + item.weight, 0);
-  if (Math.abs(windowWeight - 1) > 0.0001) issues.push({ code: "WINDOW_WEIGHTS_NOT_100", severity: "FATAL", message: `Window weights sum to ${windowWeight}, expected 1.` });
-  for (const level of ["CAMPAIGN", "ADSET", "AD"] as const) {
-    const weights = request.config.contextWeights[level];
-    if (Math.abs(weights.entity + weights.context - 1) > 0.0001) issues.push({ code: `CONTEXT_WEIGHTS_${level}_NOT_100`, severity: "FATAL", message: `${level} context weights must sum to 1.` });
+  const validScopeIds = new Set(scopes.map((scope) => scope.scopeId));
+  const brokenClassificationRules = request.config.classificationRules.filter((rule) =>
+    rule.outcome === "PFM_INCLUDED" && (!rule.scopeId || !validScopeIds.has(rule.scopeId))
+  );
+  if (brokenClassificationRules.length) {
+    issues.push({ code: "CLASSIFICATION_SCOPE_MISSING", severity: "FATAL", message: `${brokenClassificationRules.length} PFM classification rules point to a missing scope.` });
+  }
+  const classified = classifyFacts(request.facts.filter((row) => row.date <= request.asOfDate), request.config);
+  const included = classified.filter((row) => row.optimizationClass === "PFM_INCLUDED").length;
+  const unclassified = classified.filter((row) => row.optimizationClass === "REVIEW_UNCLASSIFIED").length;
+  if (!included && classified.length) {
+    issues.push({ code: "NO_PFM_ROWS_INCLUDED", severity: "WARNING", message: "No rows are currently routed into an enabled PFM optimization scope." });
+  }
+  if (unclassified) {
+    issues.push({ code: "UNCLASSIFIED_ROWS_REQUIRE_REVIEW", severity: "WARNING", message: `${unclassified} rows do not match a PFM/Non-PFM classification rule.` });
   }
   return { status: issues.some((item) => item.severity === "FATAL") ? "FAIL" : issues.length ? "WARNING" : "PASS", issues, latestSourceUpdateAt: latest };
 }
