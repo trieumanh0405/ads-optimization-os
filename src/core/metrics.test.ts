@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeMetric, sumFacts, weightedGeometricMean } from "./metrics";
+import { computeMetric, sumFacts, weightedGeometricMean, weightedAverage, median, achievement } from "./metrics";
 import type { FactRow } from "./schemas";
 
 function fact(overrides: Partial<FactRow> = {}): FactRow {
@@ -82,5 +82,70 @@ describe("metric aggregation", () => {
       { value: 1.2, weight: 0.4 },
       { value: null, weight: 0.6, required: true }
     ])).toBeNull();
+  });
+});
+
+describe("weightedAverage", () => {
+  it("calculates basic weighted average", () => {
+    const res = weightedAverage([
+      { value: 10, weight: 1 },
+      { value: 20, weight: 3 },
+    ]);
+    expect(res).toBe(17.5);
+  });
+
+  it("handles null values by filtering them out when not required", () => {
+    const res = weightedAverage([
+      { value: 10, weight: 1 },
+      { value: null, weight: 2, required: false },
+    ]);
+    expect(res).toBe(10);
+  });
+
+  it("returns null when a required item has null value", () => {
+    const res = weightedAverage([
+      { value: 10, weight: 1 },
+      { value: null, weight: 2, required: true },
+    ]);
+    expect(res).toBeNull();
+  });
+});
+
+describe("median", () => {
+
+  it("calculates median for odd count array", () => {
+    expect(median([3, 1, 2])).toBe(2);
+  });
+
+  it("calculates median for even count array", () => {
+    expect(median([4, 1, 3, 2])).toBe(2.5);
+  });
+
+  it("returns null for empty array", () => {
+    expect(median([])).toBeNull();
+  });
+});
+
+describe("achievement", () => {
+  it("calculates HIGHER_IS_BETTER basic achievement", () => {
+    expect(achievement(10, 5, "HIGHER_IS_BETTER")).toBe(2);
+  });
+
+  it("calculates LOWER_IS_BETTER basic achievement", () => {
+    expect(achievement(10, 20, "LOWER_IS_BETTER")).toBe(2);
+  });
+
+  it("returns capped value for value=0 in LOWER_IS_BETTER", () => {
+    expect(achievement(0, 20, "LOWER_IS_BETTER")).toBe(10);
+    expect(achievement(0, 20, "LOWER_IS_BETTER", 15)).toBe(15);
+  });
+
+  it("returns null when value is null", () => {
+    expect(achievement(null, 10, "HIGHER_IS_BETTER")).toBeNull();
+  });
+
+  it("returns null when target is negative or zero", () => {
+    expect(achievement(10, -5, "HIGHER_IS_BETTER")).toBeNull();
+    expect(achievement(10, 0, "HIGHER_IS_BETTER")).toBeNull();
   });
 });

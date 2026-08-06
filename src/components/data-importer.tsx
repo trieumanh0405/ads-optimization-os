@@ -9,6 +9,7 @@ import { classifyFacts } from "@/core/scopes";
 import { requiredMappingGaps, suggestMappings } from "@/product/mapping";
 import type { LocalProject } from "@/product/types";
 import type { TeamApi } from "@/product/team-api";
+import { useCsvWorker } from "@/hooks/use-csv-worker";
 
 const IMPORT_BATCH_SIZE = 350;
 
@@ -57,6 +58,7 @@ const fieldLabels: Record<string, string> = {
 export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [fileName, setFileName] = useState("");
+  const [rawCsvText, setRawCsvText] = useState("");
   const [rows, setRows] = useState<Record<string, string>[]>([]);
   const [sourceKind, setSourceKind] = useState<"CSV" | "GOOGLE_SHEETS">(project.config.dataSource.kind);
   const [spreadsheetInput, setSpreadsheetInput] = useState(project.config.dataSource.spreadsheetId ?? "");
@@ -76,6 +78,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
   const [errors, setErrors] = useState<NormalizeError[]>([]);
   const [busy, setBusy] = useState(false);
   const [batchProgress, setBatchProgress] = useState<{ completed: number; total: number } | null>(null);
+  const { processFile: processInWorker, progress: workerProgress } = useCsvWorker();
 
   const headers = useMemo(() => rows[0] ? Object.keys(rows[0]) : [], [rows]);
   const gaps = useMemo(() => requiredMappingGaps(mappings), [mappings]);
@@ -103,7 +106,9 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
 
   async function handleFile(file: File) {
     try {
-      const parsed = parseCsv(await file.text());
+      const text = await file.text();
+      setRawCsvText(text);
+      const parsed = parseCsv(text);
       setSourceKind("CSV");
       setGoogleSource(null);
       setFileName(file.name);
@@ -118,6 +123,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
 
   function chooseSource(next: "CSV" | "GOOGLE_SHEETS") {
     setSourceKind(next);
+    setRawCsvText("");
     setRows([]);
     setFileName("");
     setErrors([]);
@@ -178,23 +184,52 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
     }
     setBusy(true);
     try {
-      const result = normalizeRows(rows, {
-        projectId: project.config.projectId,
-        platform: project.config.platform,
-        accountId: project.config.accountId,
-        mappings,
-        metricMappings,
-        dimensionMappings
-      });
-      setErrors(result.errors);
-      if (mode === "STRICT" && result.errors.length) {
-        notify(`Strict mode đã chặn import vì có ${result.errors.length} lỗi.`, "error");
+      let normFacts: FactRow[];
+      let normErrors: NormalizeError[];
+
+      if (sourceKind === "CSV" && rawCsvText) {
+        try {
+          const result = await processInWorker(
+            rawCsvText,
+            mappings,
+            project.config,
+            metricMappings,
+            dimensionMappings
+          );
+          normFacts = result.facts;
+          normErrors = result.errors;
+        } catch {
+          // Fallback to main thread
+          const result = normalizeRows(rows, {
+            projectId: project.config.projectId,
+            platform: project.config.platform,
+            accountId: project.config.accountId,
+            mappings,
+            metricMappings,
+            dimensionMappings
+          });
+          normFacts = classifyFacts(result.facts, project.config);
+          normErrors = result.errors;
+        }
+      } else {
+        const result = normalizeRows(rows, {
+          projectId: project.config.projectId,
+          platform: project.config.platform,
+          accountId: project.config.accountId,
+          mappings,
+          metricMappings,
+          dimensionMappings
+        });
+        normFacts = classifyFacts(result.facts, project.config);
+        normErrors = result.errors;
+      }
+
+      setErrors(normErrors);
+      if (mode === "STRICT" && normErrors.length) {
+        notify(`Strict mode đã chặn import vì có ${normErrors.length} lỗi.`, "error");
         return;
       }
-      const acceptedFacts = classifyFacts(
-        mode === "PARTIAL" ? result.facts : result.errors.length ? [] : result.facts,
-        project.config
-      );
+      const acceptedFacts = mode === "PARTIAL" ? normFacts : normErrors.length ? [] : normFacts;
       const nextConfig = {
         ...project.config,
         dataSource: sourceKind === "GOOGLE_SHEETS" && googleSource ? {
@@ -206,7 +241,7 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
           syncIntervalMinutes,
           autoRunAfterSync,
           lastSyncedAt: new Date().toISOString(),
-          lastSyncStatus: result.errors.length ? "PARTIAL" as const : "SUCCESS" as const
+          lastSyncStatus: normErrors.length ? "PARTIAL" as const : "SUCCESS" as const
         } : {
           kind: "CSV" as const,
           autoSyncEnabled: false,
@@ -237,8 +272,8 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
         storedImport = await teamApi<{ importRecord: LocalProject["imports"][number] }>(`/api/projects/${encodeURIComponent(project.config.projectId)}/import`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ finalize: {
-            fileName, entityLevel, accepted: acceptedFacts.length, rejected: new Set(result.errors.map((item) => item.row)).size,
-            mode, errorCodes: [...new Set(result.errors.map((item) => item.code))]
+            fileName, entityLevel, accepted: acceptedFacts.length, rejected: new Set(normErrors.map((item) => item.row)).size,
+            mode, errorCodes: [...new Set(normErrors.map((item) => item.code))]
           } })
         });
       }
@@ -258,9 +293,9 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
           fileName,
           entityLevel,
           accepted: acceptedFacts.length,
-          rejected: new Set(result.errors.map((item) => item.row)).size,
+          rejected: new Set(normErrors.map((item) => item.row)).size,
           mode,
-          errorCodes: [...new Set(result.errors.map((item) => item.code))]
+          errorCodes: [...new Set(normErrors.map((item) => item.code))]
         }, ...project.imports].slice(0, 100),
         updatedAt: now
       });
@@ -472,6 +507,16 @@ export function DataImporter({ project, onUpdate, notify, teamApi }: Props) {
           </div>
 
           <div className="cardActions">
+            {workerProgress.stage !== "idle" && workerProgress.stage !== "done" && (
+              <div className="importProgress">
+                <RefreshCw size={16} className="spin" />
+                <span>
+                  {workerProgress.stage === "parsing" && "Đang parse CSV..."}
+                  {workerProgress.stage === "normalizing" && `Đang chuẩn hóa ${workerProgress.detail ?? ""}...`}
+                  {workerProgress.stage === "classifying" && `Đang phân loại ${workerProgress.detail ?? ""}...`}
+                </span>
+              </div>
+            )}
             <span className="helperText">Strict: có 1 lỗi thì không lưu batch. Partial: chỉ lưu dòng hợp lệ.</span>
             <button className="primaryAction" disabled={busy || gaps.length > 0} onClick={validateAndImport}>
               <FileSpreadsheet size={17} />

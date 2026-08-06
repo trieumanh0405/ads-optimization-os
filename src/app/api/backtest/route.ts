@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { runBacktest } from "@/core/backtest";
+import { requireUser } from "@/server/auth";
 
 const schema = z.object({
   baseRequest: z.unknown(),
@@ -11,6 +12,12 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
+  try {
+    await requireUser(request);
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "UNAUTHORIZED" }, { status: 401 });
+  }
+
   try {
     const input = schema.parse(await request.json());
     return NextResponse.json(runBacktest(input.baseRequest, input.checkpoints));

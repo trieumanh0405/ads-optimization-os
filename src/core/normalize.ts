@@ -53,7 +53,18 @@ function numberOrNull(value: unknown): number | null {
 
 function isoDate(value: unknown): string | null {
   if (typeof value !== "string" && !(value instanceof Date)) return null;
-  const date = value instanceof Date ? value : new Date(value);
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+  let str = value.trim();
+  if (!str) return null;
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(str)) {
+    str = `${str.replace(/\//g, "-")}T00:00:00Z`;
+  } else if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}[\sT]00:00(:00)?$/.test(str)) {
+    const datePart = str.split(/[\sT]/)[0].replace(/\//g, "-");
+    str = `${datePart}T00:00:00Z`;
+  }
+  const date = new Date(str);
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
 }
 

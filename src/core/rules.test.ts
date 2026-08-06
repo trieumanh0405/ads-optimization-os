@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { evaluateEntity, ownsBudget } from "./rules";
+import { evaluateEntity, ownsBudget, canonicalScoreSource, applyCrossEntityGuardrails } from "./rules";
 import type { EntityEvidence } from "./windows";
 import type { ProjectConfig, OptimizationRule, OptimizationScope } from "./schemas";
+import type { Recommendation } from "./rules";
 
 const windowEvidence = (id: string, role: "SIGNAL" | "CONFIRMATION") => ({
   id, label: id, role, includeInScore: true,
@@ -94,5 +95,74 @@ describe("rule guardrails", () => {
     expect(output.recommendedAction).toBe("KEEP");
     expect(output.weightedAchievement).toBe(1.2);
     expect(output.contextWeightedAchievement).toBe(0.5);
+  });
+});
+
+describe("canonicalScoreSource", () => {
+  it("maps legacy values WEIGHTED and CONTEXT_WEIGHTED to GEOMETRIC", () => {
+    expect(canonicalScoreSource("WEIGHTED")).toBe("GEOMETRIC");
+    expect(canonicalScoreSource("CONTEXT_WEIGHTED")).toBe("GEOMETRIC");
+    expect(canonicalScoreSource("GEOMETRIC")).toBe("GEOMETRIC");
+    expect(canonicalScoreSource("COHORT_GEOMETRIC")).toBe("COHORT_GEOMETRIC");
+  });
+});
+
+describe("applyCrossEntityGuardrails", () => {
+  it("limits scale actions to maxDailyScaleActions", () => {
+    const makeRec = (id: string, action: "INCREASE_BUDGET" | "KEEP", confidence: number): Recommendation => ({
+      scopeId: "s1", scopeName: "Scope", ruleSetId: "R", ruleVersion: 1,
+      entityLevel: "ADSET", entityId: id, entityName: `Adset ${id}`,
+      campaignId: "C1", adsetId: id, currentStatus: "ACTIVE", budgetType: "ABO",
+      recommendedAction: action, adjustmentPct: 0.2, reasonCodes: ["SCALE_RULE"],
+      matchedRuleIds: ["r1"], evidenceWindow: "SHORT", currentMetric: 50,
+      evaluatedValue: 1.2, targetMetric: 100, weightedAchievement: 1.2,
+      contextWeightedAchievement: 1.2, cohortWeightedAchievement: null,
+      cohortBenchmark: null, minimumWindowAchievement: 1.0, trendRatio: 1.0,
+      redFlagWindowIds: [], confidence, executionPhase: 2, windowMetrics: []
+    });
+
+    const recs = [
+      makeRec("as1", "INCREASE_BUDGET", 0.9),
+      makeRec("as2", "INCREASE_BUDGET", 0.8),
+      makeRec("as3", "INCREASE_BUDGET", 0.7),
+    ];
+
+    const testConfig = { ...config, maxDailyScaleActions: 2 };
+    const result = applyCrossEntityGuardrails(recs, testConfig);
+
+    const scaleActions = result.filter((r) => r.recommendedAction === "INCREASE_BUDGET");
+    expect(scaleActions).toHaveLength(2);
+
+    const reviewActions = result.filter((r) => r.recommendedAction === "REVIEW_MANUALLY");
+    expect(reviewActions).toHaveLength(1);
+    expect(reviewActions[0].reasonCodes).toContain("DAILY_SCALE_LIMIT_REACHED");
+    expect(reviewActions[0].adjustmentPct).toBeNull();
+  });
+
+  it("does not mutate the input array", () => {
+    const makeRec = (id: string, phase: 1 | 2 | 3): Recommendation => ({
+      scopeId: "s1", scopeName: "Scope", ruleSetId: "R", ruleVersion: 1,
+      entityLevel: "ADSET", entityId: id, entityName: `Adset ${id}`,
+      campaignId: "C1", adsetId: id, currentStatus: "ACTIVE", budgetType: "ABO",
+      recommendedAction: "KEEP", adjustmentPct: null, reasonCodes: [],
+      matchedRuleIds: [], evidenceWindow: "SHORT", currentMetric: 50,
+      evaluatedValue: 1.2, targetMetric: 100, weightedAchievement: 1.2,
+      contextWeightedAchievement: 1.2, cohortWeightedAchievement: null,
+      cohortBenchmark: null, minimumWindowAchievement: 1.0, trendRatio: 1.0,
+      redFlagWindowIds: [], confidence: 0.8, executionPhase: phase, windowMetrics: []
+    });
+    const original = [makeRec("as2", 2), makeRec("as1", 1)];
+    const originalCopy = [...original];
+    applyCrossEntityGuardrails(original, config);
+    expect(original).toEqual(originalCopy);
+  });
+
+  it("calculates evidence using denominator field (clicks/impressions)", () => {
+    const cpcMetric = { key: "CPC", label: "CPC", kind: "RATIO" as const, numerator: "spend" as const, denominator: "clicks" as const, multiplier: 1, direction: "LOWER_IS_BETTER" as const, nullWhenDenominatorZero: true };
+    const item = evidence("ADSET", "ABO");
+    // windowEvidence has clicks: 100
+    const output = evaluateEntity(item, [item], [rule("R1", "KEEP")], config, cpcMetric, scope);
+    expect(output.recommendedAction).toBe("KEEP");
+    expect(output.confidence).toBeGreaterThan(0);
   });
 });

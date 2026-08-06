@@ -38,4 +38,16 @@ describe("action lifecycle", () => {
     expect(done.event.from).toBe("PENDING");
     expect(() => transitionAction(done.action, "REJECTED", "leader", "2026-07-20T10:00:00Z", null)).toThrow();
   });
+
+  it("rounds numeric values to 4 decimal places so minor float precision differences produce identical hashes", () => {
+    const rec1 = { ...recommendation, currentMetric: 200.00001, weightedAchievement: 0.50004 };
+    const rec2 = { ...recommendation, currentMetric: 200.00004, weightedAchievement: 0.50001 };
+    const rec3 = { ...recommendation, currentMetric: 200.1, weightedAchievement: 0.5 };
+    const record1 = createActionRecords({ recommendations: [rec1], runId: "R1", runAt: "2026-07-20T08:00:00Z", projectId: "P", existing: [] })[0];
+    const record2 = createActionRecords({ recommendations: [rec2], runId: "R2", runAt: "2026-07-20T08:00:00Z", projectId: "P", existing: [] })[0];
+    const record3 = createActionRecords({ recommendations: [rec3], runId: "R3", runAt: "2026-07-20T08:00:00Z", projectId: "P", existing: [] })[0];
+
+    expect(record1.evidenceHash).toBe(record2.evidenceHash);
+    expect(record1.evidenceHash).not.toBe(record3.evidenceHash);
+  });
 });

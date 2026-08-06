@@ -85,7 +85,7 @@ function normalized(value: unknown): string {
 
 function fieldValue(fact: FactRow, field: string): string {
   if (field.startsWith("dimensions.")) return normalized(fact.dimensions[field.slice("dimensions.".length)]);
-  if (field in fact) return normalized((fact as unknown as Record<string, unknown>)[field]);
+  if (Object.hasOwn(fact, field)) return normalized((fact as unknown as Record<string, unknown>)[field]);
   return normalized(fact.dimensions[field]);
 }
 
@@ -105,13 +105,17 @@ function ruleMatches(fact: FactRow, rule: ClassificationRule): boolean {
 export function classifyFact(
   fact: FactRow,
   config: ProjectConfig,
-  scopes = resolvedScopes(config)
+  scopes = resolvedScopes(config),
+  sortedRules?: ClassificationRule[],
+  scopeIds?: Set<string>,
+  fallback?: OptimizationScope
 ): FactRow {
-  const scopeIds = new Set(scopes.map((scope) => scope.scopeId));
-  const match = [...config.classificationRules]
+  const activeScopeIds = scopeIds ?? new Set(scopes.map((scope) => scope.scopeId));
+  const activeRules = sortedRules ?? [...config.classificationRules]
     .filter((rule) => rule.enabled)
-    .sort((a, b) => b.priority - a.priority)
-    .find((rule) => ruleMatches(fact, rule));
+    .sort((a, b) => b.priority - a.priority);
+
+  const match = activeRules.find((rule) => ruleMatches(fact, rule));
 
   if (match) {
     if (match.outcome === "NON_PFM_EXCLUDED") {
@@ -122,7 +126,7 @@ export function classifyFact(
         classificationReason: `RULE:${match.id}`
       };
     }
-    if (match.scopeId && scopeIds.has(match.scopeId)) {
+    if (match.scopeId && activeScopeIds.has(match.scopeId)) {
       return {
         ...fact,
         scopeId: match.scopeId,
@@ -138,11 +142,14 @@ export function classifyFact(
     };
   }
 
-  const fallback = scopes.find((scope) => scope.fallbackClassification === "PFM_INCLUDED");
-  if (fallback) {
+  const activeFallback = fallback !== undefined
+    ? fallback
+    : scopes.find((scope) => scope.fallbackClassification === "PFM_INCLUDED");
+
+  if (activeFallback) {
     return {
       ...fact,
-      scopeId: fallback.scopeId,
+      scopeId: activeFallback.scopeId,
       optimizationClass: "PFM_INCLUDED",
       classificationReason: config.classificationRules.length ? "FALLBACK_SCOPE" : "LEGACY_DEFAULT_SCOPE"
     };
@@ -157,7 +164,12 @@ export function classifyFact(
 
 export function classifyFacts(facts: FactRow[], config: ProjectConfig): FactRow[] {
   const scopes = resolvedScopes(config);
-  return facts.map((fact) => classifyFact(fact, config, scopes));
+  const sortedRules = [...config.classificationRules]
+    .filter((rule) => rule.enabled)
+    .sort((a, b) => b.priority - a.priority);
+  const scopeIds = new Set(scopes.map((scope) => scope.scopeId));
+  const fallback = scopes.find((scope) => scope.fallbackClassification === "PFM_INCLUDED");
+  return facts.map((fact) => classifyFact(fact, config, scopes, sortedRules, scopeIds, fallback));
 }
 
 export function factsForScope(facts: FactRow[], scopeId: string): FactRow[] {

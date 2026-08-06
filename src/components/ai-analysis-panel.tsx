@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Bot, Check, KeyRound, Plus, Send, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Bot, Check, Send, ShieldCheck, Sparkles } from "lucide-react";
 import { sumFacts } from "@/core/metrics";
 import type { ActionRecord } from "@/core/actions";
 import type { AiInsight } from "@/ai/contracts";
 import { BUILT_IN_PLAYBOOKS } from "@/ai/playbooks";
 import { apiJson } from "@/product/api";
 import type { AiAnalysisRecord, AiProviderDraft, LocalProject } from "@/product/types";
+import { ProviderDialog, type Provider } from "@/components/provider-dialog";
 
 type Props = {
   project: LocalProject;
@@ -71,50 +72,55 @@ export function AiAnalysisPanel({
 }: Props) {
   const [providerId, setProviderId] = useState(providers[0]?.id ?? "");
   const provider = providers.find((item) => item.id === providerId) ?? providers[0];
+  const [selectedModel, setSelectedModel] = useState(provider?.model ?? "gpt-4.1-mini");
   const actionOptions = project.actions.filter((action) => action.approvalStatus === "PENDING" || action.approvalStatus === "DEFERRED");
   const [actionId, setActionId] = useState(actionOptions[0]?.id ?? project.actions[0]?.id ?? "");
   const action = project.actions.find((item) => item.id === actionId) ?? actionOptions[0] ?? project.actions[0];
-  const [apiKey, setApiKey] = useState(() =>
-    typeof window === "undefined" || !provider ? "" : sessionStorage.getItem(`ads-os-key-${provider.id}`) ?? ""
-  );
-  const [rememberSession, setRememberSession] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (provider) {
+      setSelectedModel(provider.model || "gpt-4.1-mini");
+    }
+  }, [provider]);
+
+  useEffect(() => {
+    apiJson<{ providers: Array<Record<string, any>> }>("/api/ai/providers")
+      .then((res) => {
+        if (res.providers && res.providers.length > 0) {
+          const drafts: AiProviderDraft[] = res.providers.map((p) => ({
+            id: p.id || p.provider_id || "",
+            name: p.name || "",
+            kind: (p.kind === "ANTHROPIC" || p.kind === "GEMINI" ? p.kind : "OPENAI_COMPATIBLE") as AiProviderDraft["kind"],
+            baseUrl: p.baseUrl || p.base_url || "",
+            model: Array.isArray(p.models) && p.models.length > 0 ? p.models[0] : "gpt-4.1-mini"
+          }));
+          onProvidersChange(drafts);
+          if (!providerId) {
+            setProviderId(drafts[0].id);
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const latestAnalysis = useMemo(
     () => analyses.find((item) => item.projectId === project.config.projectId && item.actionId === action?.id) ?? null,
     [analyses, project.config.projectId, action?.id]
   );
 
-  function updateProvider(patch: Partial<AiProviderDraft>) {
-    if (!provider) return;
-    onProvidersChange(providers.map((item) => item.id === provider.id ? { ...item, ...patch } : item));
-  }
-
-  function addProvider() {
-    const next: AiProviderDraft = {
-      id: `provider-${crypto.randomUUID().slice(0, 8)}`,
-      name: "Custom provider",
-      kind: "OPENAI_COMPATIBLE",
-      baseUrl: "https://api.openai.com/v1",
-      model: "gpt-4.1-mini"
-    };
-    onProvidersChange([...providers, next]);
-    setProviderId(next.id);
-    setApiKey("");
-  }
-
-  function removeProvider() {
-    if (!provider || providers.length <= 1) return notify("Workspace phải còn ít nhất một provider.", "error");
-    if (!window.confirm(`Xóa cấu hình provider "${provider.name}"? API key session cũng sẽ bị quên.`)) return;
-    const remaining = providers.filter((item) => item.id !== provider.id);
-    sessionStorage.removeItem(`ads-os-key-${provider.id}`);
-    onProvidersChange(remaining);
-    setProviderId(remaining[0].id);
-    setApiKey(sessionStorage.getItem(`ads-os-key-${remaining[0].id}`) ?? "");
-  }
-
-  function selectProvider(id: string) {
-    setProviderId(id);
-    setApiKey(sessionStorage.getItem(`ads-os-key-${id}`) ?? "");
+  function handleServerProvidersChange(serverProviders: Provider[]) {
+    const drafts: AiProviderDraft[] = serverProviders.map((p) => ({
+      id: p.id,
+      name: p.name,
+      kind: (p.kind === "ANTHROPIC" || p.kind === "GEMINI" ? p.kind : "OPENAI_COMPATIBLE") as AiProviderDraft["kind"],
+      baseUrl: p.baseUrl,
+      model: p.models[0] || "gpt-4.1-mini"
+    }));
+    onProvidersChange(drafts);
+    if (drafts.length > 0 && !drafts.some((d) => d.id === providerId)) {
+      setProviderId(drafts[0].id);
+    }
   }
 
   function togglePlaybook(id: string) {
@@ -124,10 +130,8 @@ export function AiAnalysisPanel({
   }
 
   async function analyze() {
-    if (!provider) return notify("Chưa có AI provider.", "error");
+    if (!provider) return notify("Chưa có AI provider. Hãy cấu hình provider trong AI providers dialog.", "error");
     if (!action) return notify("Hãy chạy engine để có action trước.", "error");
-    if (!apiKey) return notify("Nhập API key cho provider.", "error");
-    if (rememberSession) sessionStorage.setItem(`ads-os-key-${provider.id}`, apiKey);
     setBusy(true);
     try {
       const snapshot = buildSnapshot(project, action);
@@ -135,7 +139,8 @@ export function AiAnalysisPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          provider: { ...provider, apiKey },
+          providerId: provider.id,
+          model: selectedModel || provider.model || "gpt-4.1-mini",
           playbookIds: selectedPlaybookIds,
           metrics: snapshot.metrics,
           dimensions: snapshot.dimensions,
@@ -160,7 +165,7 @@ export function AiAnalysisPanel({
         actionId: action.id,
         createdAt: new Date().toISOString(),
         providerName: provider.name,
-        model: provider.model,
+        model: selectedModel || provider.model || "gpt-4.1-mini",
         playbookIds: selectedPlaybookIds,
         insight: response.insight
       });
@@ -177,44 +182,30 @@ export function AiAnalysisPanel({
       <section className="sectionCard">
         <div className="sectionHeader">
           <div>
-            <span className="sectionKicker">BYOK · MULTI-PROVIDER</span>
+            <span className="sectionKicker">ENCRYPTED KEY · MULTI-PROVIDER</span>
             <h2>AI diagnostics</h2>
             <p>AI giải thích supporting metrics và giả thuyết; rule engine vẫn là nguồn action duy nhất.</p>
           </div>
           <div className="headerActions">
-            <span className="statusBadge success"><ShieldCheck size={14} /> Key không lưu vào workspace</span>
-            <button className="secondaryAction" onClick={addProvider}><Plus size={14} /> Provider</button>
-            <button className="iconAction dangerIcon" onClick={removeProvider} aria-label="Xóa provider"><Trash2 size={15} /></button>
+            <span className="statusBadge success"><ShieldCheck size={14} /> Key mã hóa phía server</span>
+            <ProviderDialog onProvidersChange={handleServerProvidersChange} />
           </div>
         </div>
         <div className="formGrid">
           <label>Provider
-            <select value={provider?.id ?? ""} onChange={(event) => selectProvider(event.target.value)}>
+            <select value={providerId} onChange={(event) => setProviderId(event.target.value)}>
+              {providers.length === 0 && <option value="">Chưa có provider · hãy thêm provider</option>}
               {providers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
-          <label>Tên provider
-            <input value={provider?.name ?? ""} onChange={(event) => updateProvider({ name: event.target.value })} />
-          </label>
           <label>Loại API
-            <select value={provider?.kind ?? "OPENAI_COMPATIBLE"} onChange={(event) => updateProvider({ kind: event.target.value as AiProviderDraft["kind"] })}>
-              <option value="OPENAI_COMPATIBLE">OpenAI compatible</option>
-              <option value="ANTHROPIC">Anthropic</option>
-              <option value="GEMINI">Gemini</option>
-            </select>
+            <input value={provider?.kind ?? ""} readOnly disabled />
           </label>
           <label>Base URL
-            <input value={provider?.baseUrl ?? ""} onChange={(event) => updateProvider({ baseUrl: event.target.value })} />
+            <input value={provider?.baseUrl ?? ""} readOnly disabled />
           </label>
           <label>Model
-            <input value={provider?.model ?? ""} onChange={(event) => updateProvider({ model: event.target.value })} />
-          </label>
-          <label className="fullWidth">API key
-            <div className="inputWithIcon"><KeyRound size={16} /><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Chỉ gửi qua HTTPS cho request phân tích này" /></div>
-          </label>
-          <label className="checkboxLine fullWidth">
-            <input type="checkbox" checked={rememberSession} onChange={(event) => setRememberSession(event.target.checked)} />
-            Chỉ nhớ trong tab/session hiện tại; đóng browser sẽ xóa.
+            <input value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} placeholder="gpt-4.1-mini" />
           </label>
           <label className="fullWidth">Action cần phân tích
             <select value={action?.id ?? ""} onChange={(event) => setActionId(event.target.value)}>
@@ -253,7 +244,7 @@ export function AiAnalysisPanel({
           })}
         </div>
         <div className="cardActions">
-          <span className="helperText">API key đi thẳng tới provider qua serverless proxy và không được ghi log/store.</span>
+          <span className="helperText">API key được lưu mã hóa phía server và giải mã an toàn khi thực thi request.</span>
           <button className="primaryAction" disabled={busy || !action} onClick={analyze}>
             {busy ? <Sparkles className="spin" size={16} /> : <Send size={16} />}
             {busy ? "Đang phân tích…" : "Phân tích action"}

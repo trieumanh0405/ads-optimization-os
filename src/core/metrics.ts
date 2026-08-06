@@ -55,9 +55,9 @@ export function computeMetric(totals: MetricTotals, definition: MetricDefinition
   return (numerator / denominator) * definition.multiplier;
 }
 
-export function achievement(value: number | null, target: number, direction: MetricDefinition["direction"]): number | null {
+export function achievement(value: number | null, target: number, direction: MetricDefinition["direction"], cap = 10): number | null {
   if (value === null || value < 0 || target <= 0) return null;
-  if (direction === "LOWER_IS_BETTER") return value === 0 ? null : target / value;
+  if (direction === "LOWER_IS_BETTER") return value === 0 ? cap : target / value;
   return value / target;
 }
 

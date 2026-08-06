@@ -16,14 +16,32 @@ export type ActionRecord = {
 };
 export type ActionEvent = { id: string; actionId: string; at: string; actor: string; from: ApprovalStatus; to: ApprovalStatus; note: string | null };
 
+function roundNumericValues<T>(obj: T): T {
+  if (typeof obj === "number") {
+    return Number.isFinite(obj) ? (Math.round(obj * 10000) / 10000 as unknown as T) : obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => roundNumericValues(item)) as unknown as T;
+  }
+  if (obj !== null && typeof obj === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      result[key] = roundNumericValues(value);
+    }
+    return result as T;
+  }
+  return obj;
+}
+
 export function evidenceHash(recommendation: Recommendation): string {
-  return createHash("sha256").update(JSON.stringify({
+  const payload = roundNumericValues({
     scopeId: recommendation.scopeId, entityId: recommendation.entityId, action: recommendation.recommendedAction,
     currentMetric: recommendation.currentMetric, score: recommendation.weightedAchievement,
     contextScore: recommendation.contextWeightedAchievement,
     cohortScore: recommendation.cohortWeightedAchievement,
     rules: recommendation.matchedRuleIds, reasons: recommendation.reasonCodes
-  })).digest("hex");
+  });
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 export function createActionRecords(input: {

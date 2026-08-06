@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createProject } from "@/product/defaults";
 import type { FactRow, OptimizationScope } from "./schemas";
-import { classifyFacts } from "./scopes";
+import { classifyFacts, resolvedScopes, factsForScope } from "./scopes";
 
 function project() {
   return createProject({
@@ -68,5 +68,39 @@ describe("PFM scope classification", () => {
       ["NON_PFM_EXCLUDED", null],
       ["REVIEW_UNCLASSIFIED", null]
     ]);
+  });
+
+  it("does not match prototype properties on FactRow (e.g. toString)", () => {
+    const item = project();
+    item.config.classificationRules = [
+      { id: "proto", name: "Proto Test", field: "toString", operator: "CONTAINS", values: ["function"], outcome: "PFM_INCLUDED", scopeId: "s1", priority: 100, enabled: true }
+    ];
+    const output = classifyFacts([fact("Test ad", "Lead")], item.config);
+    expect(output[0].classificationReason).not.toBe("RULE:proto");
+  });
+});
+
+describe("resolvedScopes", () => {
+  it("returns at least one scope when optimizationScopes is empty (legacyScope fallback)", () => {
+    const item = project();
+    const emptyConfig = { ...item.config, optimizationScopes: [] };
+    const scopes = resolvedScopes(emptyConfig);
+
+    expect(scopes.length).toBeGreaterThanOrEqual(1);
+    expect(scopes[0].scopeId).toBe("default-pfm");
+  });
+});
+
+describe("factsForScope", () => {
+  it("filters facts by scopeId and PFM_INCLUDED status", () => {
+    const facts: FactRow[] = [
+      { ...fact("f1", "Lead"), scopeId: "scope_a", optimizationClass: "PFM_INCLUDED" },
+      { ...fact("f2", "Lead"), scopeId: "scope_b", optimizationClass: "PFM_INCLUDED" },
+      { ...fact("f3", "Lead"), scopeId: "scope_a", optimizationClass: "NON_PFM_EXCLUDED" },
+    ];
+
+    const filtered = factsForScope(facts, "scope_a");
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].sourceRowKey).toBe("f1");
   });
 });

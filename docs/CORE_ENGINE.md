@@ -45,7 +45,13 @@ Achievement always uses “higher is better” orientation:
 
 Today is excluded from SHORT and LONG. A weighted score renormalizes available optional windows, but missing required windows returns `null`.
 
-`windowScore = Σ(achievement × weight) / Σ(available weight)`
+`windowScore = Π(MIN(achievement, cap)^(weight/totalWeight))` which is computed as `exp(Σ((weight/totalWeight) × ln(MIN(achievement, cap))))`
+
+Note that:
+- Zero achievement with evidence collapses score to 0
+- Missing windows are excluded and remaining weights normalized
+- Values are capped (default cap=2) so one exceptional window cannot hide a weak one
+- This is the weighted geometric mean, NOT arithmetic average
 
 ## Entity and context score
 

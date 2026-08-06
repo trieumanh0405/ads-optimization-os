@@ -8,28 +8,58 @@ export type QcResult = { status: "PASS" | "WARNING" | "FAIL"; issues: QcIssue[];
 export function runDataQualityChecks(request: EngineRequest): QcResult {
   const issues: QcIssue[] = [];
   if (!request.facts.length) issues.push({ code: "RAW_DATA_EMPTY", severity: "FATAL", message: "No normalized fact rows were provided." });
+
   const keys = new Map<string, number>();
-  for (const row of request.facts) keys.set(row.sourceRowKey, (keys.get(row.sourceRowKey) ?? 0) + 1);
+  const missingIds: string[] = [];
+  const brokenHierarchy: string[] = [];
+  const wrongProject: string[] = [];
+  const wrongAccount: string[] = [];
+  const futureRows: string[] = [];
+  const usableFacts: FactRow[] = [];
+  let latest: string | null = null;
+
+  for (const row of request.facts) {
+    keys.set(row.sourceRowKey, (keys.get(row.sourceRowKey) ?? 0) + 1);
+
+    if (!entityId(row)) missingIds.push(row.sourceRowKey);
+
+    if ((row.entityLevel === "ADSET" && !row.adsetId) || (row.entityLevel === "AD" && (!row.adsetId || !row.adId))) {
+      brokenHierarchy.push(row.sourceRowKey);
+    }
+
+    if (row.projectId !== request.config.projectId) {
+      wrongProject.push(row.sourceRowKey);
+    }
+
+    if (row.accountId !== request.config.accountId || row.platform !== request.config.platform) {
+      wrongAccount.push(row.sourceRowKey);
+    }
+
+    if (!latest || row.sourceUpdatedAt > latest) {
+      latest = row.sourceUpdatedAt;
+    }
+
+    if (row.date > request.asOfDate) {
+      futureRows.push(row.sourceRowKey);
+    } else {
+      usableFacts.push(row);
+    }
+  }
+
   const duplicates = [...keys].filter(([, count]) => count > 1).map(([key]) => key);
   if (duplicates.length) issues.push({ code: "DUPLICATE_SOURCE_KEYS", severity: "FATAL", message: `${duplicates.length} duplicate source keys.`, sourceRowKeys: duplicates });
-  const missingIds = request.facts.filter((row) => !entityId(row)).map((row) => row.sourceRowKey);
   if (missingIds.length) issues.push({ code: "MISSING_ENTITY_ID", severity: "FATAL", message: `${missingIds.length} rows have no ID for their entity level.`, sourceRowKeys: missingIds });
-  const brokenHierarchy = request.facts.filter((row) =>
-    (row.entityLevel === "ADSET" && !row.adsetId)
-    || (row.entityLevel === "AD" && (!row.adsetId || !row.adId))
-  ).map((row) => row.sourceRowKey);
   if (brokenHierarchy.length) issues.push({ code: "BROKEN_ENTITY_HIERARCHY", severity: "FATAL", message: `${brokenHierarchy.length} rows are missing a parent/entity ID.`, sourceRowKeys: brokenHierarchy });
-  const wrongProject = request.facts.filter((row) => row.projectId !== request.config.projectId).map((row) => row.sourceRowKey);
   if (wrongProject.length) issues.push({ code: "PROJECT_ID_MISMATCH", severity: "FATAL", message: "Fact rows contain a different projectId.", sourceRowKeys: wrongProject });
-  const wrongAccount = request.facts.filter((row) => row.accountId !== request.config.accountId || row.platform !== request.config.platform).map((row) => row.sourceRowKey);
   if (wrongAccount.length) issues.push({ code: "ACCOUNT_OR_PLATFORM_MISMATCH", severity: "FATAL", message: "Fact rows contain a different accountId or platform.", sourceRowKeys: wrongAccount });
-  const latest = request.facts.reduce<string | null>((max, row) => !max || row.sourceUpdatedAt > max ? row.sourceUpdatedAt : max, null);
+
   if (latest) {
     const ageHours = (new Date(request.runAt).getTime() - new Date(latest).getTime()) / 3_600_000;
     if (ageHours > request.config.dataFreshnessHours) issues.push({ code: "SOURCE_DATA_STALE", severity: "FATAL", message: `Source data is ${ageHours.toFixed(1)} hours old.` });
   }
-  const futureRows = request.facts.filter((row) => row.date > request.asOfDate).map((row) => row.sourceRowKey);
+
   if (futureRows.length) issues.push({ code: "FUTURE_DATED_ROWS", severity: "WARNING", message: `${futureRows.length} rows are after asOfDate and will be ignored.`, sourceRowKeys: futureRows });
+
   const scopes = resolvedScopes(request.config);
   for (const scope of scopes) {
     const activeDefinition = request.metricDefinitions.find((item) => item.key === scope.primaryMetricKey);
@@ -58,7 +88,7 @@ export function runDataQualityChecks(request: EngineRequest): QcResult {
   if (brokenClassificationRules.length) {
     issues.push({ code: "CLASSIFICATION_SCOPE_MISSING", severity: "FATAL", message: `${brokenClassificationRules.length} PFM classification rules point to a missing scope.` });
   }
-  const classified = classifyFacts(request.facts.filter((row) => row.date <= request.asOfDate), request.config);
+  const classified = classifyFacts(usableFacts, request.config);
   const included = classified.filter((row) => row.optimizationClass === "PFM_INCLUDED").length;
   const unclassified = classified.filter((row) => row.optimizationClass === "REVIEW_UNCLASSIFIED").length;
   if (!included && classified.length) {

@@ -28,14 +28,7 @@ export function runOptimizationEngine(rawRequest: unknown) {
     const scopedConfig = projectConfigForScope(request.config, scope);
     const planEvidence = buildEntityEvidence(scopedFacts, scopedConfig, metric, request.asOfDate, scope);
     const cohortBenchmark = computeCohortBenchmark(scopedFacts, scopedConfig, scope, metric, request.asOfDate);
-    const cohortEvidence = cohortBenchmark === null ? [] : buildEntityEvidence(
-      scopedFacts,
-      scopedConfig,
-      metric,
-      request.asOfDate,
-      { ...scope, planTarget: cohortBenchmark }
-    );
-    const evidence = attachCohortEvidence(planEvidence, cohortEvidence, cohortBenchmark);
+    const evidence = attachCohortEvidence(planEvidence, cohortBenchmark, scope, metric);
     const recommendations = applyCrossEntityGuardrails(
       evidence.map((entity) => evaluateEntity(entity, evidence, request.rules, scopedConfig, metric, scope)),
       scopedConfig

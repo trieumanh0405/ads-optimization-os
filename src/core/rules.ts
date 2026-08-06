@@ -1,6 +1,7 @@
 import type { ActionCode, MetricDefinition, OptimizationRule, OptimizationScope, ProjectConfig } from "./schemas";
 import type { EntityEvidence, WindowId } from "./windows";
 import { contextGeometricAchievement } from "./windows";
+import type { MetricTotals } from "./metrics";
 
 export type Recommendation = {
   scopeId: string;
@@ -112,14 +113,21 @@ function evidenceSourceIds(entity: EntityEvidence, source: string): WindowId[] {
   return source.includes("_PLUS_") ? source.split("_PLUS_") : [source];
 }
 
+function getDenominatorEvidence(totals: MetricTotals, definition: MetricDefinition): number {
+  if (definition.denominator === "qualifiedResult") return totals.qualifiedResult ?? 0;
+  if (definition.denominator === "result") return totals.result ?? 0;
+  if (definition.denominator === "clicks") return totals.clicks ?? 0;
+  if (definition.denominator === "impressions") return totals.impressions ?? 0;
+  return totals.result ?? 0;
+}
+
 function evidenceForRule(entity: EntityEvidence, rule: OptimizationRule, config: ProjectConfig, definition: MetricDefinition): boolean {
   const sourceIds = evidenceSourceIds(entity, rule.evidenceSource);
   const windows = sourceIds.map((id) => entity.windows[id]).filter((item): item is NonNullable<typeof item> => item !== null);
   if (windows.length !== sourceIds.length || windows.some((window) => !window.eligible)) return false;
   const spendThreshold = Math.max(rule.minSpendAbsolute ?? 0, (rule.minSpendTargetMultiple ?? 0) * config.target);
   const spend = windows.reduce((sum, item) => sum + item.totals.spend, 0);
-  const evidenceCount = windows.reduce((sum, item) => sum + (definition.denominator === "qualifiedResult"
-    ? (item.totals.qualifiedResult ?? 0) : (item.totals.result ?? 0)), 0);
+  const evidenceCount = windows.reduce((sum, item) => sum + getDenominatorEvidence(item.totals, definition), 0);
   return spend >= spendThreshold && evidenceCount >= rule.minResults;
 }
 
@@ -127,8 +135,7 @@ function confidence(entity: EntityEvidence, rule: OptimizationRule, definition: 
   const sourceIds = evidenceSourceIds(entity, rule.evidenceSource);
   const sources = sourceIds.map((id) => entity.windows[id]).filter((item): item is NonNullable<typeof item> => item !== null);
   if (!sources.length) return 0;
-  const evidenceCount = sources.reduce((sum, source) => sum + (definition.denominator === "qualifiedResult"
-    ? (source.totals.qualifiedResult ?? 0) : (source.totals.result ?? 0)), 0);
+  const evidenceCount = sources.reduce((sum, source) => sum + getDenominatorEvidence(source.totals, definition), 0);
   const resultConfidence = Math.min(1, evidenceCount / Math.max(1, rule.minResults * 2));
   const rowConfidence = Math.min(1, sources.reduce((sum, source) => sum + source.rowCount, 0) / 3);
   return Number(((resultConfidence * 0.7) + (rowConfidence * 0.3)).toFixed(3));
@@ -256,7 +263,7 @@ export function evaluateEntity(
 export function applyCrossEntityGuardrails(recommendations: Recommendation[], config: ProjectConfig): Recommendation[] {
   let scaleCount = 0;
   const childActions = recommendations.filter((item) => item.executionPhase === 1 && item.recommendedAction === "TURN_OFF");
-  return recommendations
+  return [...recommendations]
     .sort((a, b) => a.executionPhase - b.executionPhase || b.confidence - a.confidence)
     .map((item) => {
       let next = item;

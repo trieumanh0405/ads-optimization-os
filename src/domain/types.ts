@@ -1,12 +1,12 @@
-export type EntityLevel = "campaign" | "adset" | "ad";
+/**
+ * Note: src/core/schemas.ts is the primary source of truth for domain schemas and types.
+ * Overlapping types (EntityLevel, ActionCode, OptimizationRule) are imported and re-exported from core/schemas.ts.
+ */
+import type { EntityLevel, ActionCode, OptimizationRule } from "../core/schemas";
+
+export type { EntityLevel, ActionCode, OptimizationRule };
+
 export type MetricDirection = "lower_is_better" | "higher_is_better";
-export type ActionCode =
-  | "PENDING_DATA"
-  | "KEEP"
-  | "TURN_OFF"
-  | "DECREASE_BUDGET"
-  | "INCREASE_BUDGET"
-  | "REVIEW_MANUALLY";
 
 export interface MetricSnapshot {
   metricKey: string;
@@ -16,22 +16,6 @@ export interface MetricSnapshot {
   results: number;
   direction: MetricDirection;
   dataFresh: boolean;
-}
-
-export interface OptimizationRule {
-  id: string;
-  version: number;
-  entityLevel: EntityLevel;
-  metricKey: string;
-  minSpend: number;
-  minResults: number;
-  operator: "lt" | "lte" | "gt" | "gte" | "between";
-  thresholdFrom: number;
-  thresholdTo?: number;
-  action: ActionCode;
-  adjustmentPct?: number;
-  priority: number;
-  enabled: boolean;
 }
 
 export interface RuleDecision {

@@ -3,10 +3,13 @@ import { parseAiInsight, type AiProvider } from "./contracts";
 export class GeminiProvider implements AiProvider {
   constructor(public readonly id: string, private readonly baseUrl: string, private readonly apiKey: string) {}
   async analyze(input: { model: string; systemPrompt: string; payload: unknown }) {
-    const url = `${this.baseUrl.replace(/\/$/, "")}/models/${encodeURIComponent(input.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
+    const url = `${this.baseUrl.replace(/\/$/, "")}/models/${encodeURIComponent(input.model)}:generateContent`;
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": this.apiKey
+      },
       signal: AbortSignal.timeout(55_000),
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: input.systemPrompt }] },

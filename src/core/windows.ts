@@ -54,6 +54,7 @@ export type EntityEvidence = {
 };
 
 export function expandFactLevels(facts: FactRow[]): FactRow[] {
+  // Note: Derived parent rows must be created for every child fact row to preserve dates and per-row metric values. Deduplicating them before aggregation would lose metric data and produce incorrect sum totals.
   const expanded = [...facts];
   const levels = new Set(facts.map((fact) => fact.entityLevel));
   if (!levels.has("ADSET")) {
@@ -179,7 +180,12 @@ export function buildEntityEvidence(
   const groups = new Map<string, FactRow[]>();
   for (const row of expandFactLevels(facts)) {
     const key = `${row.entityLevel}|${entityId(row)}`;
-    groups.set(key, [...(groups.get(key) ?? []), row]);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(row);
+    } else {
+      groups.set(key, [row]);
+    }
   }
   const evidence = [...groups.values()].map((rows) => {
     const current = [...rows].sort((a, b) => b.date.localeCompare(a.date))[0];
@@ -293,21 +299,87 @@ export function computeCohortBenchmark(
   if (ids.size < scope.cohortBenchmark.minEntities) return null;
   if (scope.cohortBenchmark.method === "AGGREGATE") return computeMetric(aggregate, definition);
   const groups = new Map<string, FactRow[]>();
-  for (const fact of selected) groups.set(entityId(fact), [...(groups.get(entityId(fact)) ?? []), fact]);
+  for (const fact of selected) {
+    const key = entityId(fact);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(fact);
+    } else {
+      groups.set(key, [fact]);
+    }
+  }
   return median([...groups.values()]
     .map((rows) => computeMetric(sumFacts(rows), definition))
     .filter((value): value is number => value !== null));
+}
+
+export function computeCohortWeightedAchievement(
+  entity: EntityEvidence,
+  cohortBenchmark: number,
+  scope: OptimizationScope,
+  definition: MetricDefinition
+): number | null {
+  const configWindows = resolvedWindows(scope.windows);
+  const included = configWindows.filter((window) => window.includeInScore && window.weight > 0);
+  return weightedGeometricMean(
+    included.map((window) => {
+      const evidence = entity.windows[window.id];
+      const achievementValue = evidence?.eligible
+        ? achievement(evidence.value, cohortBenchmark, definition.direction)
+        : null;
+      return {
+        value: achievementValue,
+        weight: window.weight,
+        required: window.required
+      };
+    }),
+    scope.achievementCap
+  );
 }
 
 export function attachCohortEvidence(
   planEvidence: EntityEvidence[],
   cohortEvidence: EntityEvidence[],
   benchmark: number | null
+): EntityEvidence[];
+export function attachCohortEvidence(
+  planEvidence: EntityEvidence[],
+  benchmark: number | null,
+  scope: OptimizationScope,
+  definition: MetricDefinition
+): EntityEvidence[];
+export function attachCohortEvidence(
+  planEvidence: EntityEvidence[],
+  cohortEvidenceOrBenchmark: EntityEvidence[] | number | null,
+  benchmarkOrScope?: number | null | OptimizationScope,
+  scopeOrDefinition?: MetricDefinition
 ): EntityEvidence[] {
-  const scores = new Map(cohortEvidence.map((item) => [`${item.entityLevel}|${item.entityId}`, item.weightedAchievement]));
+  if (Array.isArray(cohortEvidenceOrBenchmark)) {
+    const cohortEvidence = cohortEvidenceOrBenchmark;
+    const benchmark = benchmarkOrScope as number | null;
+    const scores = new Map(cohortEvidence.map((item) => [`${item.entityLevel}|${item.entityId}`, item.weightedAchievement]));
+    return planEvidence.map((item) => ({
+      ...item,
+      cohortWeightedAchievement: scores.get(`${item.entityLevel}|${item.entityId}`) ?? null,
+      cohortBenchmark: benchmark
+    }));
+  }
+
+  const benchmark = cohortEvidenceOrBenchmark;
+  const scope = benchmarkOrScope as OptimizationScope | undefined;
+  const definition = scopeOrDefinition;
+
+  if (benchmark === null || !scope || !definition) {
+    return planEvidence.map((item) => ({
+      ...item,
+      cohortWeightedAchievement: null,
+      cohortBenchmark: benchmark
+    }));
+  }
+
   return planEvidence.map((item) => ({
     ...item,
-    cohortWeightedAchievement: scores.get(`${item.entityLevel}|${item.entityId}`) ?? null,
+    cohortWeightedAchievement: computeCohortWeightedAchievement(item, benchmark, scope, definition),
     cohortBenchmark: benchmark
   }));
 }

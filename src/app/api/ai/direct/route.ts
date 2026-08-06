@@ -7,6 +7,8 @@ import {
   findBuiltInPlaybooks,
   missingPlaybookMetrics
 } from "@/ai/playbooks";
+import { requireUser } from "@/server/auth";
+import { getProviderSecret } from "@/server/provider-store";
 
 export const maxDuration = 60;
 
@@ -30,14 +32,12 @@ function isSafeProviderUrl(value: string): boolean {
 }
 
 const requestSchema = z.object({
+  providerId: z.string().min(1).optional(),
   provider: z.object({
-    id: z.string().min(1),
-    name: z.string().min(1),
-    kind: z.enum(["OPENAI_COMPATIBLE", "ANTHROPIC", "GEMINI"]),
-    baseUrl: z.string().url().refine(isSafeProviderUrl, "Provider base URL must be a public HTTPS endpoint"),
-    apiKey: z.string().min(8),
-    model: z.string().min(1)
-  }),
+    id: z.string().min(1).optional(),
+    model: z.string().optional()
+  }).optional(),
+  model: z.string().optional(),
   playbookIds: z.array(z.string()).max(10).default([]),
   metrics: z.record(z.number().nullable()),
   dimensions: z.record(z.string().nullable()).default({}),
@@ -47,19 +47,31 @@ const requestSchema = z.object({
 
 export async function POST(request: Request) {
   try {
+    const user = await requireUser(request);
     const body = requestSchema.parse(await request.json());
+    const providerId = body.providerId || body.provider?.id;
+    if (!providerId) {
+      throw new Error("providerId is required");
+    }
+
+    const stored = await getProviderSecret(user.organizationId, providerId);
+    if (!isSafeProviderUrl(stored.baseUrl)) {
+      throw new Error("Provider base URL must be a public HTTPS endpoint");
+    }
+
     const playbooks = [basePerformancePlaybook, ...findBuiltInPlaybooks(body.playbookIds)];
     const provider = createProvider({
-      id: body.provider.id,
-      kind: body.provider.kind,
-      name: body.provider.name,
-      baseUrl: body.provider.baseUrl,
-      apiKey: body.provider.apiKey,
-      enabled: true
+      id: stored.id,
+      kind: stored.kind,
+      name: stored.name,
+      baseUrl: stored.baseUrl,
+      apiKey: stored.apiKey,
+      enabled: stored.enabled
     });
+    const selectedModel = body.model || body.provider?.model || stored.models[0] || "gpt-4.1-mini";
     const missingMetrics = missingPlaybookMetrics(playbooks, body.metrics);
     const insight = await provider.analyze({
-      model: body.provider.model,
+      model: selectedModel,
       systemPrompt: compilePlaybooks(playbooks),
       payload: {
         projectContext: body.projectContext,
@@ -89,3 +101,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+

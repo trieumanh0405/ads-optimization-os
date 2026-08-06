@@ -55,3 +55,11 @@ export async function getProviderSecret(organizationId: string, providerId: stri
   };
   return { ...provider, apiKey: decryptSecret(provider.encryptedApiKey) };
 }
+
+export async function deleteProvider(organizationId: string, providerId: string) {
+  const { error } = await supabaseAdmin().from("ai_providers")
+    .delete()
+    .eq("organization_id", organizationId).eq("provider_id", providerId);
+  assertSupabaseResult(error);
+}
+
