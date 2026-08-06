@@ -1,4 +1,4 @@
-# Ads Optimization OS
+# Ads Optimization OS 
 
 Tài liệu này là hướng dẫn tổng thể cho người vận hành, người kiểm tra logic và developer của Ads Optimization OS.
 
