@@ -85,12 +85,13 @@ Google Sheets / CSV / BigQuery trong tương lai
 
 | Thành phần | Chức năng |
 |---|---|
-| Next.js trên Vercel | Giao diện, API routes, rule engine và AI proxy |
-| Supabase Auth | Đăng nhập magic link |
-| Supabase PostgreSQL | Project config, facts, runs, Action Queue và Action Log |
-| Google Sheets | Nguồn raw data chính trong giai đoạn hiện tại |
-| Browser IndexedDB | Browser workspace/local cache và chế độ dùng cá nhân |
-| AI provider | OpenAI-compatible, Anthropic hoặc Gemini do người dùng nhập key |
+| Next.js 15 trên Vercel | Giao diện (modular React components), API routes (authed), rule engine và AI proxy |
+| Supabase Auth | Đăng nhập magic link (OTP) & middleware xác thực API |
+| Supabase PostgreSQL | Project config, facts, runs, encrypted AI providers, Action Queue và Action Log (RLS) |
+| Web Worker | Xử lý parse, normalize và classify dữ liệu CSV lớn ngoài main thread (tránh đơ UI) |
+| Google Sheets | Nguồn raw data chính qua Google Sheets API v4 |
+| Browser IndexedDB | Local persistence cho chế độ dùng cá nhân/offline |
+| AI provider | OpenAI, Anthropic, Gemini (API key mã hoá AES-256-GCM HKDF v2 lưu server-side) |
 
 ### Team workspace và Browser workspace
 
@@ -113,9 +114,9 @@ Trong Team workspace, Supabase là source of truth. Đóng browser hoặc reload
 | Engine snapshot | bảng `optimization_runs` |
 | Action đang xử lý | bảng `action_queue` |
 | Lịch sử chuyển trạng thái action | bảng `action_log` |
-| API key AI trong Browser BYOK | chỉ trong request hoặc `sessionStorage` nếu người dùng chọn nhớ trong session |
+| AI Provider API keys | Mã hóa AES-256-GCM + HKDF v2 (bảng `ai_providers` server-side, không lưu client/sessionStorage) |
 
-Không đưa `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` hoặc AI API key vào GitHub, Google Sheet hay ảnh debug công khai.
+Không đưa `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `PROVIDER_KEY_ENCRYPTION_SECRET` hoặc AI API key vào GitHub, Google Sheet hay ảnh debug công khai.
 
 ---
 
@@ -1417,14 +1418,17 @@ Server kiểm tra permission trên mọi stored route. Việc ẩn button trên 
 | Full engine pipeline | `src/core/engine.ts` |
 | Default config/rules | `src/product/defaults.ts` |
 | Google Sheets reader | `src/server/google-sheets.ts` |
-| Supabase persistence/sync | `src/server/project-store.ts` |
+| Project Services (Modular) | `src/server/projects/` (`project-access`, `project-repository`, `fact-import-service`, `google-sync-service`, `engine-runner`, `action-service`) |
+| Key Derivation & Crypto | `src/server/secret-crypto.ts` (AES-256-GCM + HKDF v2) |
+| AI Provider Store | `src/server/provider-store.ts` (Encrypted DB storage) |
 | AI playbooks | `src/ai/playbooks.ts` |
+| CSV Web Worker | `src/workers/csv-processor.worker.ts` & `src/hooks/use-csv-worker.ts` |
 
 UI không được định nghĩa lại formula khác với `src/core`.
 
 ### Local development
 
-Yêu cầu Node.js 20+.
+Yêu cầu Node.js 20+ và pnpm 10.
 
 ```bash
 pnpm install
@@ -1448,9 +1452,9 @@ Chi tiết: [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md).
 ### Validation
 
 ```bash
-pnpm typecheck
-pnpm test
-pnpm build
+pnpm typecheck   # TypeScript strict mode — 0 errors required
+pnpm test         # Vitest unit test suite (82 tests passing)
+pnpm build        # Next.js production build
 ```
 
 Nếu pnpm chặn build scripts:
@@ -1466,11 +1470,17 @@ Approve `esbuild` và `sharp`.
 ```text
 src/
   ai/          provider adapters, contracts, playbooks
-  app/         Next.js pages và API routes
-  components/  operator UI
-  core/        formulas, QC, rules, actions
-  product/     workspace, persistence, defaults
-  server/      Supabase, auth, Google Sheets, secrets
+  app/         Next.js pages và API routes (tất cả API core đã qua auth)
+  components/  operator UI (modular architecture)
+    dialogs/   create-project-dialog, team-access-dialog
+    helpers/   format-utils (number, labels, run status)
+    shell/     supabase-team-entry, workspace-sidebar, workspace-topbar
+    views/     overview-view, project-setup-view, decision-board, action-queue, runs-audit
+  core/        formulas, QC, rules, actions, normalize, windows, backtest
+  hooks/       use-csv-worker (Web Worker hook cho CSV processing)
+  product/     workspace, persistence, defaults, team-api
+  server/      Supabase, auth, Google Sheets, secrets, projects/ (6 modules)
+  workers/     csv-processor.worker.ts (Background thread parsing & normalizing)
 supabase/
   migrations/  PostgreSQL schema và RLS
 docs/
@@ -1479,6 +1489,8 @@ docs/
   CORE_ENGINE.md
   API.md
   SUPABASE_SETUP.md
+CHANGELOG.md    Lịch sử nâng cấp dự án (v1.0.0, v1.1.0 Phase 1, v1.2.0 Phase 2)
+CONTRIBUTING.md Hướng dẫn đóng góp cho contributors
 ```
 
 ### API chính
