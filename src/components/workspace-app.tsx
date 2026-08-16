@@ -126,6 +126,7 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
   const [createInput, setCreateInput] = useState<ProjectCreateInput>(defaultCreateInput);
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
+  const [aiActionId, setAiActionId] = useState<string | null>(null);
   const teamSyncTimers = useRef(new Map<string, number>());
   const activeSourceSyncs = useRef(new Set<string>());
 
@@ -327,6 +328,7 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
         operatorName={workspace.operatorName}
         onOperatorNameChange={(name) => setWorkspace((current) => ({ ...current, operatorName: name }))}
         userEmail={team?.email}
+        isAdmin={!team || team.role === "admin"}
       />
 
       <div className="productMain">
@@ -412,6 +414,10 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
               teamApi={team?.api ?? null}
               toast={notify}
               onSync={() => syncProjectFromSource(project.config.projectId)}
+              onAnalyzeAction={(actionId) => {
+                setAiActionId(actionId);
+                setView("AI");
+              }}
             />
           )}
           {project && workspace.activeView === "ACTIONS" && (
@@ -422,6 +428,10 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
               operatorName={workspace.operatorName}
               toast={notify}
               teamApi={team?.api ?? null}
+              onAnalyzeAction={(actionId) => {
+                setAiActionId(actionId);
+                setView("AI");
+              }}
             />
           )}
           {project && workspace.activeView === "AI" && (
@@ -435,6 +445,9 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
               onPlaybooksChange={(selectedPlaybookIds) => setWorkspace((current) => ({ ...current, selectedPlaybookIds }))}
               onAnalysis={(analysis) => setWorkspace((current) => ({ ...current, analyses: [analysis, ...current.analyses].slice(0, 200) }))}
               notify={notify}
+              teamApi={team?.api ?? null}
+              isAdmin={!team || team.role === "admin"}
+              initialActionId={aiActionId}
             />
           )}
           {project && workspace.activeView === "RUNS" && (

@@ -10,6 +10,7 @@ import {
   Play,
   RefreshCw,
   ShieldAlert,
+  Sparkles,
   X,
   XCircle
 } from "lucide-react";
@@ -78,6 +79,7 @@ export type DecisionBoardProps = {
   teamApi: TeamApi | null;
   toast: (message: string, tone?: "info" | "success" | "error") => void;
   onSync?: () => Promise<SourceSyncResponse | null>;
+  onAnalyzeAction?: (actionId: string) => void;
 };
 
 export function DecisionBoard({
@@ -85,7 +87,8 @@ export function DecisionBoard({
   onProjectChange,
   toast,
   teamApi,
-  onSync
+  onSync,
+  onAnalyzeAction
 }: DecisionBoardProps) {
   const latestFactDate = project.facts.reduce<string | null>(
     (latest, fact) => (!latest || fact.date > latest ? fact.date : latest),
@@ -108,6 +111,16 @@ export function DecisionBoard({
   );
   const source = project.config.dataSource;
   const canSync = source.kind === "GOOGLE_SHEETS" && Boolean(onSync);
+
+  function matchingActionId(item: RecommendationView): string | null {
+    return project.actions.find((action) =>
+      action.scopeId === item.scopeId &&
+      action.entityLevel === item.entityLevel &&
+      action.entityId === item.entityId &&
+      action.recommendedAction === item.recommendedAction &&
+      (action.approvalStatus === "PENDING" || action.approvalStatus === "DEFERRED")
+    )?.id ?? null;
+  }
 
   async function refreshSource() {
     if (!onSync) return;
@@ -445,6 +458,14 @@ export function DecisionBoard({
               </strong>
               <p>{selected.reasonCodes.join(" · ")}</p>
             </div>
+            {matchingActionId(selected) && onAnalyzeAction && (
+              <button
+                className="secondaryAction fullWidthAction"
+                onClick={() => onAnalyzeAction(matchingActionId(selected)!)}
+              >
+                <Sparkles size={16} /> Phân tích thêm bằng AI
+              </button>
+            )}
             <dl className="evidenceList">
               <div>
                 <dt>KPI today</dt>

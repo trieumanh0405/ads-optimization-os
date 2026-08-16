@@ -48,13 +48,19 @@ export function createActionRecords(input: {
   recommendations: Recommendation[]; runId: string; runAt: string; projectId: string;
   existing: Array<Pick<ActionRecord, "actionKey" | "approvalStatus">>;
 }): ActionRecord[] {
-  const seen = new Set(input.existing.map((item) => item.actionKey));
+  const seenKeys = new Set(input.existing.map((item) => item.actionKey));
+  const activeKeys = input.existing
+    .filter((item) => item.approvalStatus === "PENDING" || item.approvalStatus === "DEFERRED")
+    .map((item) => item.actionKey);
   return input.recommendations
     .filter((item) => item.recommendedAction !== "PENDING_DATA" && item.recommendedAction !== "KEEP")
     .flatMap((item) => {
     const hash = evidenceHash(item);
-    const actionKey = `${input.projectId}|${item.scopeId}|${item.entityLevel}|${item.entityId}|${item.recommendedAction}|${hash.slice(0, 16)}`;
-    if (seen.has(actionKey)) return [];
+    // One open action per entity + recommendation. Legacy keys ended with an
+    // evidence hash, so prefix matching also stops old queues growing forever.
+    const actionPrefix = `${input.projectId}|${item.scopeId}|${item.entityLevel}|${item.entityId}|${item.recommendedAction}`;
+    const actionKey = `${actionPrefix}|${hash.slice(0, 16)}`;
+    if (seenKeys.has(actionKey) || activeKeys.some((key) => key === actionPrefix || key.startsWith(`${actionPrefix}|`))) return [];
     return [{
       id: randomUUID(), actionKey, runId: input.runId, runAt: input.runAt, projectId: input.projectId,
       scopeId: item.scopeId, scopeName: item.scopeName,
