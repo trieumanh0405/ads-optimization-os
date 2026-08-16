@@ -30,7 +30,13 @@ export type ProviderDialogProps = {
 const DEFAULT_BASE_URLS = {
   openai: "https://api.openai.com/v1",
   anthropic: "https://api.anthropic.com",
-  gemini: "https://generativelanguage.googleapis.com"
+  gemini: "https://generativelanguage.googleapis.com/v1beta"
+};
+
+const DEFAULT_MODELS = {
+  openai: "gpt-4.1-mini, gpt-4.1",
+  anthropic: "claude-sonnet-4-5",
+  gemini: "gemini-3.6-flash"
 };
 
 const INITIAL_FORM: ProviderFormState = {
@@ -38,7 +44,7 @@ const INITIAL_FORM: ProviderFormState = {
   kind: "openai",
   baseUrl: DEFAULT_BASE_URLS.openai,
   apiKey: "",
-  models: "gpt-4.1-mini, gpt-4.1"
+  models: DEFAULT_MODELS.openai
 };
 
 export function ProviderDialog({ onProvidersChange, teamApi }: ProviderDialogProps) {
@@ -79,7 +85,8 @@ export function ProviderDialog({ onProvidersChange, teamApi }: ProviderDialogPro
     setForm((prev) => ({
       ...prev,
       kind,
-      baseUrl: DEFAULT_BASE_URLS[kind] || prev.baseUrl
+      baseUrl: DEFAULT_BASE_URLS[kind] || prev.baseUrl,
+      models: DEFAULT_MODELS[kind]
     }));
   }
 

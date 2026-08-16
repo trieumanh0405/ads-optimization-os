@@ -1208,6 +1208,8 @@ Sidebar cố ý tách hai nhóm:
 
 Model ID và base URL có thể chỉnh trên UI.
 
+Gemini REST phải dùng Base URL `https://generativelanguage.googleapis.com/v1beta`. Nếu Google từ chối request, giao diện hiển thị thêm `status`, `reason` và message an toàn từ Gemini (ví dụ `API_KEY_INVALID`, model không khả dụng hoặc request không hợp lệ) để debug mà không lộ API key.
+
 ### Built-in playbooks
 
 | Playbook | Mục đích |
