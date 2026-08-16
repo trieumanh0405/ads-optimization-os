@@ -20,6 +20,17 @@ describe("action lifecycle", () => {
     const second = createActionRecords({ recommendations: [recommendation], runId: "R2", runAt: "2026-07-20T09:00:00Z", projectId: "P", existing: [{ actionKey: first[0].actionKey, approvalStatus: "PENDING" }] });
     expect(second).toHaveLength(0);
   });
+  it("does not create another open action when live evidence changes", () => {
+    const first = createActionRecords({ recommendations: [recommendation], runId: "R1", runAt: "2026-07-20T08:00:00Z", projectId: "P", existing: [] });
+    const changed = createActionRecords({
+      recommendations: [{ ...recommendation, currentMetric: 260, weightedAchievement: 0.38 }],
+      runId: "R2",
+      runAt: "2026-07-20T09:00:00Z",
+      projectId: "P",
+      existing: [{ actionKey: first[0].actionKey, approvalStatus: "PENDING" }]
+    });
+    expect(changed).toHaveLength(0);
+  });
   it("does not recreate a completed action until its evidence changes", () => {
     const first = createActionRecords({ recommendations: [recommendation], runId: "R1", runAt: "2026-07-20T08:00:00Z", projectId: "P", existing: [] });
     const repeated = createActionRecords({

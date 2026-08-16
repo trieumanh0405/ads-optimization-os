@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bot, Check, Send, ShieldCheck, Sparkles } from "lucide-react";
+import { Bot, Check, ChevronDown, Search, Send, ShieldCheck, Sparkles } from "lucide-react";
 import { sumFacts } from "@/core/metrics";
 import type { ActionRecord } from "@/core/actions";
 import type { AiInsight } from "@/ai/contracts";
 import { BUILT_IN_PLAYBOOKS } from "@/ai/playbooks";
 import { apiJson } from "@/product/api";
+import type { TeamApi } from "@/product/team-api";
 import type { AiAnalysisRecord, AiProviderDraft, LocalProject } from "@/product/types";
 import { ProviderDialog, type Provider } from "@/components/provider-dialog";
 
@@ -19,6 +20,9 @@ type Props = {
   onPlaybooksChange: (ids: string[]) => void;
   onAnalysis: (analysis: AiAnalysisRecord) => void;
   notify: (message: string, tone?: "success" | "error") => void;
+  teamApi: TeamApi | null;
+  isAdmin: boolean;
+  initialActionId?: string | null;
 };
 
 function actionEntityMatches(action: ActionRecord, fact: LocalProject["facts"][number]): boolean {
@@ -68,7 +72,10 @@ export function AiAnalysisPanel({
   onProvidersChange,
   onPlaybooksChange,
   onAnalysis,
-  notify
+  notify,
+  teamApi,
+  isAdmin,
+  initialActionId
 }: Props) {
   const [providerId, setProviderId] = useState(providers[0]?.id ?? "");
   const provider = providers.find((item) => item.id === providerId) ?? providers[0];
@@ -77,6 +84,12 @@ export function AiAnalysisPanel({
   const [actionId, setActionId] = useState(actionOptions[0]?.id ?? project.actions[0]?.id ?? "");
   const action = project.actions.find((item) => item.id === actionId) ?? actionOptions[0] ?? project.actions[0];
   const [busy, setBusy] = useState(false);
+  const [showActionPicker, setShowActionPicker] = useState(false);
+  const [actionSearch, setActionSearch] = useState("");
+  const request = teamApi ?? apiJson;
+  const visibleActionOptions = actionOptions
+    .filter((item) => !actionSearch || `${item.entityName} ${item.entityId} ${item.recommendedAction}`.toLowerCase().includes(actionSearch.toLowerCase()))
+    .slice(0, 20);
 
   useEffect(() => {
     if (provider) {
@@ -85,7 +98,13 @@ export function AiAnalysisPanel({
   }, [provider]);
 
   useEffect(() => {
-    apiJson<{ providers: Array<Record<string, any>> }>("/api/ai/providers")
+    if (initialActionId && project.actions.some((item) => item.id === initialActionId)) {
+      setActionId(initialActionId);
+    }
+  }, [initialActionId, project.actions]);
+
+  useEffect(() => {
+    request<{ providers: Array<Record<string, any>> }>("/api/ai/providers")
       .then((res) => {
         if (res.providers && res.providers.length > 0) {
           const drafts: AiProviderDraft[] = res.providers.map((p) => ({
@@ -102,7 +121,7 @@ export function AiAnalysisPanel({
         }
       })
       .catch(() => {});
-  }, []);
+  }, [teamApi]);
 
   const latestAnalysis = useMemo(
     () => analyses.find((item) => item.projectId === project.config.projectId && item.actionId === action?.id) ?? null,
@@ -135,7 +154,7 @@ export function AiAnalysisPanel({
     setBusy(true);
     try {
       const snapshot = buildSnapshot(project, action);
-      const response = await apiJson<{ insight: AiInsight }>("/api/ai/direct", {
+      const response = await request<{ insight: AiInsight }>("/api/ai/direct", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -188,7 +207,7 @@ export function AiAnalysisPanel({
           </div>
           <div className="headerActions">
             <span className="statusBadge success"><ShieldCheck size={14} /> Key mã hóa phía server</span>
-            <ProviderDialog onProvidersChange={handleServerProvidersChange} />
+            {isAdmin && <ProviderDialog teamApi={teamApi} onProvidersChange={handleServerProvidersChange} />}
           </div>
         </div>
         <div className="formGrid">
@@ -207,16 +226,28 @@ export function AiAnalysisPanel({
           <label>Model
             <input value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} placeholder="gpt-4.1-mini" />
           </label>
-          <label className="fullWidth">Action cần phân tích
-            <select value={action?.id ?? ""} onChange={(event) => setActionId(event.target.value)}>
-              {!project.actions.length && <option value="">Chưa có action · hãy chạy engine</option>}
-              {project.actions.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.entityLevel} · {item.entityName} · {item.recommendedAction} · {item.approvalStatus}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="fullWidth actionContextPicker">
+            <span>Action đang phân tích</span>
+            {action ? (
+              <button className="selectedActionCard" type="button" onClick={() => setShowActionPicker((value) => !value)} aria-expanded={showActionPicker}>
+                <span><strong>{action.entityName}</strong><small>{action.entityLevel} · {action.recommendedAction} · {action.approvalStatus}</small></span>
+                <ChevronDown size={17} />
+              </button>
+            ) : <div className="emptyInline">Chưa có action · hãy chạy engine trước.</div>}
+            {showActionPicker && (
+              <div className="actionPickerPanel">
+                <label className="compactSearch"><Search size={15} /><input value={actionSearch} onChange={(event) => setActionSearch(event.target.value)} placeholder="Tìm tên hoặc ID entity…" autoFocus /></label>
+                <div className="actionPickerResults">
+                  {visibleActionOptions.map((item) => (
+                    <button key={item.id} type="button" className={item.id === action?.id ? "active" : ""} onClick={() => { setActionId(item.id); setShowActionPicker(false); }}>
+                      <strong>{item.entityName}</strong><small>{item.entityLevel} · {item.recommendedAction}</small>
+                    </button>
+                  ))}
+                  {!visibleActionOptions.length && <small>Không tìm thấy action đang mở.</small>}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 

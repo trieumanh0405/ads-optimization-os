@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Bot, Plus, Trash2, X, Eye, EyeOff } from "lucide-react";
 import { apiJson } from "@/product/api";
+import type { TeamApi } from "@/product/team-api";
 
 export type Provider = {
   id: string;
@@ -23,6 +24,7 @@ export type ProviderFormState = {
 
 export type ProviderDialogProps = {
   onProvidersChange?: (providers: Provider[]) => void;
+  teamApi: TeamApi | null;
 };
 
 const DEFAULT_BASE_URLS = {
@@ -39,18 +41,19 @@ const INITIAL_FORM: ProviderFormState = {
   models: "gpt-4.1-mini, gpt-4.1"
 };
 
-export function ProviderDialog({ onProvidersChange }: ProviderDialogProps = {}) {
+export function ProviderDialog({ onProvidersChange, teamApi }: ProviderDialogProps) {
   const [open, setOpen] = useState(false);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [form, setForm] = useState<ProviderFormState>(INITIAL_FORM);
   const [showApiKey, setShowApiKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const request = teamApi ?? apiJson;
 
   const fetchProviders = useCallback(async () => {
     try {
       setError(null);
-      const res = await apiJson<{ providers: Array<Record<string, any>> }>("/api/ai/providers");
+      const res = await request<{ providers: Array<Record<string, any>> }>("/api/ai/providers");
       const list: Provider[] = (res.providers || []).map((p) => ({
         id: p.id || p.provider_id || "",
         name: p.name || "",
@@ -64,7 +67,7 @@ export function ProviderDialog({ onProvidersChange }: ProviderDialogProps = {}) 
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load providers");
     }
-  }, [onProvidersChange]);
+  }, [onProvidersChange, teamApi]);
 
   useEffect(() => {
     if (open) {
@@ -103,7 +106,7 @@ export function ProviderDialog({ onProvidersChange }: ProviderDialogProps = {}) 
         .map((s) => s.trim())
         .filter(Boolean);
 
-      await apiJson("/api/ai/providers", {
+      await request("/api/ai/providers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -130,7 +133,7 @@ export function ProviderDialog({ onProvidersChange }: ProviderDialogProps = {}) 
     setLoading(true);
     setError(null);
     try {
-      await apiJson("/api/ai/providers", {
+      await request("/api/ai/providers", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ providerId })

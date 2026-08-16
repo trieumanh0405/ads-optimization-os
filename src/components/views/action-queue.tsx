@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { CheckCircle2, ClipboardCheck, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Search, Sparkles, X } from "lucide-react";
 import type { ActionEvent, ActionRecord, ApprovalStatus } from "@/core/actions";
 import type { TeamApi } from "@/product/team-api";
 import type { LocalProject } from "@/product/types";
@@ -13,20 +13,50 @@ export type ActionQueueProps = {
   teamApi: TeamApi | null;
   toast: (message: string, tone?: "info" | "success" | "error") => void;
   operatorName?: string;
+  onAnalyzeAction?: (actionId: string) => void;
 };
+
+const PAGE_SIZE = 50;
+const isReviewAction = (action: ActionRecord) => action.recommendedAction === "REVIEW_MANUALLY";
+const entityQueueKey = (action: ActionRecord) => `${action.scopeId}|${action.entityLevel}|${action.entityId}`;
 
 export function ActionQueue({
   project,
   operatorName = "",
   onProjectChange,
   toast,
-  teamApi
+  teamApi,
+  onAnalyzeAction
 }: ActionQueueProps) {
-  const [status, setStatus] = useState<"ALL" | ApprovalStatus>("PENDING");
+  const [queueView, setQueueView] = useState<"OPERATE" | "REVIEW" | "HISTORY">("OPERATE");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const selected = project.actions.find((item) => item.id === selectedId) ?? null;
-  const actions = project.actions.filter((action) => status === "ALL" || action.approvalStatus === status);
+  const openActions = useMemo(() => {
+    const latest = new Map<string, ActionRecord>();
+    [...project.actions]
+      .filter((action) => action.approvalStatus === "PENDING" || action.approvalStatus === "DEFERRED")
+      .sort((a, b) => b.runAt.localeCompare(a.runAt))
+      .forEach((action) => {
+        const key = entityQueueKey(action);
+        if (!latest.has(key)) latest.set(key, action);
+      });
+    return [...latest.values()];
+  }, [project.actions]);
+  const actions = useMemo(() => {
+    const source = queueView === "HISTORY"
+      ? project.actions.filter((action) => action.approvalStatus === "DONE" || action.approvalStatus === "REJECTED")
+      : openActions.filter((action) => queueView === "REVIEW" ? isReviewAction(action) : !isReviewAction(action));
+    const query = search.trim().toLowerCase();
+    return source.filter((action) => !query || `${action.entityName} ${action.entityId} ${action.recommendedAction}`.toLowerCase().includes(query));
+  }, [openActions, project.actions, queueView, search]);
+  const pageCount = Math.max(1, Math.ceil(actions.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pagedActions = actions.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const operateCount = openActions.filter((action) => !isReviewAction(action)).length;
+  const reviewCount = openActions.filter(isReviewAction).length;
 
   function open(action: ActionRecord) {
     setSelectedId(action.id);
@@ -91,14 +121,19 @@ export function ActionQueue({
   return (
     <div className="viewStack">
       <section className="metricStrip">
-        {(["PENDING", "DONE", "DEFERRED", "REJECTED"] as const).map((item, index) => (
-          <article key={item}>
-            <span className={`metricIcon ${["amber", "green", "blue", "red"][index]}`}>
+        {[
+          { label: "Cần thực hiện", value: operateCount, tone: "amber" },
+          { label: "Cần review", value: reviewCount, tone: "blue" },
+          { label: "Đã hoàn tất", value: project.actions.filter((action) => action.approvalStatus === "DONE").length, tone: "green" },
+          { label: "Đã từ chối", value: project.actions.filter((action) => action.approvalStatus === "REJECTED").length, tone: "red" }
+        ].map((item) => (
+          <article key={item.label}>
+            <span className={`metricIcon ${item.tone}`}>
               <ClipboardCheck size={18} />
             </span>
             <div>
-              <small>{item}</small>
-              <strong>{project.actions.filter((action) => action.approvalStatus === item).length}</strong>
+              <small>{item.label}</small>
+              <strong>{item.value}</strong>
               <em>actions</em>
             </div>
           </article>
@@ -111,12 +146,18 @@ export function ActionQueue({
             <h2>Action queue</h2>
             <p>V1 không gọi Meta API; media buyer xác nhận sau khi thao tác trong Ads Manager.</p>
           </div>
-          <div className="segmented">
-            {(["PENDING", "DEFERRED", "DONE", "REJECTED", "ALL"] as const).map((item) => (
-              <button key={item} className={status === item ? "active" : ""} onClick={() => setStatus(item)}>
-                {item}
+          <div className="queueControls">
+            <label className="compactSearch">
+              <Search size={15} />
+              <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Tìm entity…" />
+            </label>
+            <div className="segmented">
+            {(["OPERATE", "REVIEW", "HISTORY"] as const).map((item) => (
+              <button key={item} className={queueView === item ? "active" : ""} onClick={() => { setQueueView(item); setPage(1); }}>
+                {item === "OPERATE" ? "Thực hiện" : item === "REVIEW" ? "Cần review" : "Lịch sử"}
               </button>
             ))}
+            </div>
           </div>
         </div>
         {!actions.length ? (
@@ -140,7 +181,7 @@ export function ActionQueue({
                 </tr>
               </thead>
               <tbody>
-                {actions.map((action) => (
+                {pagedActions.map((action) => (
                   <tr key={action.id}>
                     <td>
                       <span className={`levelPill ${action.entityLevel.toLowerCase()}`}>{action.entityLevel}</span>
@@ -167,18 +208,34 @@ export function ActionQueue({
                       </span>
                     </td>
                     <td>
-                      <button
-                        className="secondaryAction small"
-                        onClick={() => open(action)}
-                        disabled={action.approvalStatus === "DONE" || action.approvalStatus === "REJECTED"}
-                      >
-                        Review
-                      </button>
+                      <div className="rowActions">
+                        {onAnalyzeAction && (
+                          <button className="iconAction" onClick={() => onAnalyzeAction(action.id)} aria-label={`Phân tích AI ${action.entityName}`}>
+                            <Sparkles size={16} />
+                          </button>
+                        )}
+                        <button
+                          className="secondaryAction small"
+                          onClick={() => open(action)}
+                          disabled={action.approvalStatus === "DONE" || action.approvalStatus === "REJECTED"}
+                        >
+                          Xử lý
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {actions.length > PAGE_SIZE && (
+          <div className="paginationBar">
+            <span>{actions.length.toLocaleString("vi-VN")} action · Trang {safePage}/{pageCount}</span>
+            <div>
+              <button className="iconAction" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} aria-label="Trang trước"><ChevronLeft size={17} /></button>
+              <button className="iconAction" disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} aria-label="Trang sau"><ChevronRight size={17} /></button>
+            </div>
           </div>
         )}
       </section>
@@ -229,6 +286,11 @@ export function ActionQueue({
                 placeholder="Đã kiểm tra Ads Manager / lý do reject / thời điểm defer…"
               />
             </label>
+            {onAnalyzeAction && (
+              <button className="secondaryAction fullWidthAction" onClick={() => onAnalyzeAction(selected.id)}>
+                <Sparkles size={16} /> Phân tích thêm bằng AI
+              </button>
+            )}
             <div className="modalActions spread">
               <button className="dangerAction" onClick={() => transition("REJECTED")}>
                 Reject

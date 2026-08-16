@@ -1093,8 +1093,16 @@ Sau khi sửa rule:
 
 ### Action Queue
 
-1. Lọc `PENDING`.
-2. Xử lý Ad trước, rồi Ad set, rồi Campaign.
+Action Queue đã được rút thành ba luồng:
+
+- `Thực hiện`: chỉ các đề xuất có thao tác rõ ràng như tắt hoặc đổi ngân sách.
+- `Cần review`: các case rule yêu cầu con người kiểm tra thêm.
+- `Lịch sử`: action đã `DONE` hoặc `REJECTED`.
+
+Tool chỉ hiển thị action mở mới nhất cho mỗi entity để các lần engine run không làm danh sách vận hành bị trùng. Lịch sử trong database và Action Log vẫn được giữ nguyên.
+
+1. Mở tab `Thực hiện` và xử lý Ad trước, rồi Ad set, rồi Campaign.
+2. Dùng ô tìm kiếm hoặc chuyển sang `Cần review` khi cần.
 3. Thao tác thật trong Ads Manager.
 4. Ghi note.
 5. Chọn:
@@ -1104,11 +1112,13 @@ Sau khi sửa rule:
 
 ### AI diagnostics
 
-1. Chọn provider/model.
-2. Nhập API key.
-3. Chọn action cần phân tích.
+Admin cấu hình API key một lần tại `AI diagnostics → AI providers`. Key được gửi thẳng về server, mã hóa rồi lưu trong Supabase; user không phải nhập lại và không nhìn thấy key thật.
+
+1. Từ Decision Board hoặc Action Queue, bấm biểu tượng AI tại đúng entity cần phân tích.
+2. Chọn provider/model.
+3. Nếu cần đổi entity, mở bộ chọn action và tìm theo tên/ID; tool chỉ tải tối đa 20 kết quả phù hợp thay vì render hàng nghìn option.
 4. Chọn một hoặc nhiều playbook.
-5. Bấm phân tích.
+5. Bấm `Phân tích action`.
 6. Đọc observations, hypotheses, suggested checks và limitations.
 
 AI insight không thay đổi action deterministic.
@@ -1165,14 +1175,17 @@ User được giao project có thể vận hành full workflow của project đ�
 ### Workflow hằng ngày
 
 1. Mở project.
-2. Kiểm tra lần refresh cuối.
-3. Refresh thủ công nếu connector chậm.
-4. Xem QC.
-5. Xem các nhóm Turn off/Invest/Keep/Review.
-6. Mở evidence của entity cần hành động.
-7. Xử lý theo Ad → Ad set → Campaign.
-8. Mark status và note.
-9. Dùng AI diagnostics cho case cần phân tích thêm.
+2. Vào `Decision Board`, kiểm tra lần refresh cuối và QC.
+3. Refresh thủ công nếu connector chậm; chạy engine khi data/config/rule thay đổi.
+4. Mở evidence của entity cần hành động.
+5. Sang `Action Queue → Thực hiện`, xử lý theo Ad → Ad set → Campaign.
+6. Mark status và note.
+7. Sang `Cần review` hoặc bấm AI tại đúng action nếu cần phân tích thêm.
+
+Sidebar cố ý tách hai nhóm:
+
+- `Vận hành`: Tổng quan, Decision Board, Action Queue, AI diagnostics — dùng hằng ngày.
+- `Quản trị hệ thống`: Project & KPI, Data import, Rule engine, Runs & audit — chỉ Admin thấy trong menu và chỉ mở khi cần cấu hình/debug.
 
 ### Khi đổi KPI/rule
 
