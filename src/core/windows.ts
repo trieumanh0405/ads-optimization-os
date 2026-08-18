@@ -123,6 +123,23 @@ export function windowBounds(window: WindowConfig, asOfDate: string, projectStar
   return { start: addDays(asOfDate, -window.days), endExclusive: asOfDate };
 }
 
+/**
+ * Target an individual entity is scored against.
+ *
+ * When the plan target is stated per qualified result but the platform reports
+ * raw ones, the two are not comparable. Scoring a reported cost straight
+ * against a qualified target makes every entity look better than the account
+ * summary, which compares like for like. Converting the target instead keeps
+ * the entity rows and the plan panel on the same scale.
+ */
+export function effectivePlanTarget(scope: OptimizationScope, definition: MetricDefinition): number {
+  const appliesToResultCounts = definition.denominator === "result" || definition.denominator === "qualifiedResult";
+  if (scope.estimateRate === null || !appliesToResultCounts) return scope.planTarget;
+  return definition.direction === "LOWER_IS_BETTER"
+    ? scope.planTarget * scope.estimateRate
+    : scope.planTarget / scope.estimateRate;
+}
+
 function resultEvidence(totals: MetricTotals, definition: MetricDefinition): number {
   if (definition.denominator === "qualifiedResult") return totals.qualifiedResult ?? 0;
   if (definition.denominator === "result") return totals.result ?? 0;
@@ -207,6 +224,7 @@ export function buildEntityEvidence(
   scope: OptimizationScope
 ): EntityEvidence[] {
   const configWindows = resolvedWindows(scope.windows);
+  const entityTarget = effectivePlanTarget(scope, definition);
   const groups = new Map<string, FactRow[]>();
   for (const row of expandFactLevels(facts)) {
     const key = `${row.entityLevel}|${entityId(row)}`;
@@ -237,7 +255,7 @@ export function buildEntityEvidence(
         ...bounds,
         totals,
         value,
-        achievement: achievement(value, scope.planTarget, definition.direction),
+        achievement: achievement(value, entityTarget, definition.direction),
         rowCount: selected.length,
         evidenceCount,
         eligible
@@ -298,7 +316,7 @@ export function buildEntityEvidence(
       ...windowBounds(windowConfig, asOfDate, config.startDate),
       totals,
       value,
-      achievement: achievement(value, scope.planTarget, definition.direction),
+      achievement: achievement(value, entityTarget, definition.direction),
       rowCount: aggregateWindows.reduce((sum, item) => sum + item.rowCount, 0),
       evidenceCount,
       eligible: totals.spend >= windowConfig.minSpend && evidenceCount >= windowConfig.minResults

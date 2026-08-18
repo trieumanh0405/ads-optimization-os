@@ -57,7 +57,7 @@ export function OverviewView({
             ["01", "Project & KPI", "Chọn CPL, CPQL, CPA, ROAS hoặc KPI chuẩn khác."],
             ["02", "Import raw data", "Map cột nguồn và chặn lỗi trước khi tính."],
             ["03", "Run engine", "Today · 3D · 7D · Lifetime + parent context."],
-            ["04", "Action queue", "Duyệt, thực hiện và giữ audit log."]
+            ["04", "Điều hành", "Duyệt, thực hiện và giữ audit log."]
           ].map(([number, title, body]) => (
             <div key={number}><b>{number}</b><strong>{title}</strong><span>{body}</span></div>
           ))}
@@ -78,8 +78,8 @@ export function OverviewView({
     { label: "Project & KPI", done: Boolean(active.config.primaryMetricKey && active.config.target), view: "PROJECT_SETUP" as const },
     { label: "Raw data", done: active.facts.length > 0, view: "DATA_IMPORT" as const },
     { label: "Rules", done: active.rules.some((rule) => rule.enabled), view: "RULES" as const },
-    { label: "Engine run", done: active.runs.length > 0, view: "DECISIONS" as const },
-    { label: "Action reviewed", done: active.actions.some((action) => action.approvalStatus !== "PENDING"), view: "ACTIONS" as const }
+    { label: "Chạy engine", done: active.runs.length > 0, view: "OPERATIONS" as const },
+    { label: "Đã xử lý đề xuất", done: active.actions.some((action) => action.approvalStatus !== "PENDING"), view: "OPERATIONS" as const }
   ];
 
   return (

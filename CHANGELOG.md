@@ -4,6 +4,47 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.4.0] — 2026-08-18 — One operating screen, plan tracking, readable decisions
+
+### Added
+
+- **Plan and pacing tracking.** A scope can state its plan on qualified results
+  and bridge to reported ones with an estimate rate, matching the team's
+  reference spreadsheet. The engine now returns, per scope: reported and
+  estimated qualified volumes and costs, the reported-result target implied by
+  the qualified target, plan achievement, how far through the plan period the
+  account is, and the extra daily budget needed to land the plan by its end
+  date. End-of-day projection extrapolates today once a quarter of the day has
+  passed and falls back to the trailing daily average before that.
+- **Merged operating screen.** Decision board and Action queue are one view.
+  The same entity shows its decision, its evidence and its execution buttons on
+  one row, so the two screens can no longer disagree about what is outstanding.
+  Stored workspaces pointing at either old view land on the merged one.
+- **Spreadsheet-style overview panel** above the table: actual vs plan, the
+  configured window and scope weights, the threshold table with the current band
+  marked, per-window cost and achievement, and the pacing figures.
+- New project fields: plan end date, planned result volume, estimate rate,
+  window blend method, context source, peer-benchmark leave-one-out, and the
+  opt-in peer guard, all editable in Project setup.
+
+### Fixed
+
+- **Entity scores and the plan panel now share one scale.** With an estimate
+  rate configured, entities were scored against the qualified-result target
+  while the account summary compared like for like, so a fleet reading 38% of
+  plan was made up of ads each reading over 100%.
+- **Reason codes read as sentences.** `BELOW_PLAN_BUT_COMPETITIVE_WITH_COHORT`
+  now reads "Dưới kế hoạch nhưng vẫn tốt hơn mặt bằng tài khoản"; raw codes stay
+  in the evidence drawer for tracing.
+- **Peer standing is legible.** The capped ratio read 200% on nearly every row;
+  rows now carry a rank within the peer group.
+- Achievement is shown against the 80/100/120 bands with a marked meter, so a
+  number can be judged without consulting the threshold table.
+- Sticky table header, one decision colour system, and a density-appropriate
+  layout for a table that routinely runs to hundreds of rows.
+
+---
+
 ## [1.3.0] — 2026-08-18 — Decision methodology corrections
 
 Recommendations now reach a conclusion for entities that previously piled up in

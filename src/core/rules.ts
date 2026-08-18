@@ -1,6 +1,6 @@
 import type { ActionCode, MetricDefinition, OptimizationRule, OptimizationScope, ProjectConfig } from "./schemas";
 import type { EntityEvidence, WindowId } from "./windows";
-import { contextAchievementFor } from "./windows";
+import { contextAchievementFor, effectivePlanTarget } from "./windows";
 import type { MetricTotals } from "./metrics";
 
 export type Recommendation = {
@@ -198,7 +198,7 @@ export function evaluateEntity(
     campaignId: entity.campaignId, adsetId: entity.adsetId, currentStatus: entity.status, budgetType: entity.budgetType,
     evidenceWindow: `Configured: ${config.windows.map((item) => item.id).join(" + ")}`, currentMetric: todayMetric,
     evaluatedValue: null,
-    targetMetric: scope.planTarget, weightedAchievement: entity.weightedAchievement,
+    targetMetric: effectivePlanTarget(scope, definition), weightedAchievement: entity.weightedAchievement,
     blendedAchievement: entity.blendedAchievement ?? entity.weightedAchievement,
     contextWeightedAchievement: contextScore, executionPhase: (entity.entityLevel === "AD" ? 1 : entity.entityLevel === "ADSET" ? 2 : 3) as 1 | 2 | 3,
     cohortWeightedAchievement: entity.cohortWeightedAchievement,

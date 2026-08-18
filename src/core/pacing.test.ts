@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildScopeSummary, dayElapsedFraction, projectToday } from "./pacing";
-import { createProject } from "@/product/defaults";
+import { runOptimizationEngine } from "./engine";
+import { effectivePlanTarget } from "./windows";
+import { buildDefaultRules, createProject } from "@/product/defaults";
 import type { FactRow, MetricDefinition, ProjectConfig } from "./schemas";
 
 const AS_OF = "2026-08-18";
@@ -109,6 +111,38 @@ describe("estimate rate bridges reported and qualified results", () => {
     expect(result.actual.rate).toBeNull();
     expect(result.actual.qualifiedResults).toBe(result.actual.reportedResults);
     expect(result.achievement).toBeCloseTo(1.25, 5);
+  });
+});
+
+describe("entity scores stay on the same scale as the plan panel", () => {
+  it("scores an entity against the reported-result target implied by the rate", () => {
+    const { config, scope } = scaffold({ planTarget: 2500, estimateRate: 0.75 });
+    const facts = Array.from({ length: 14 }, (_, index) => fact(dayOffset(index), 1_800 * 6, 6));
+    const summary = buildScopeSummary({
+      facts, config, scope, definition: CPL_METRIC, asOfDate: AS_OF, runAt: RUN_AT, entityCount: 1
+    });
+    const output = runOptimizationEngine({
+      asOfDate: AS_OF, runAt: RUN_AT,
+      config: { ...config, projectId: "P", accountId: "act_1", dataFreshnessHours: 48, optimizationScopes: [scope] },
+      metricDefinitions: [CPL_METRIC],
+      rules: buildDefaultRules("CPL", scope.ruleSetId, scope.windows),
+      facts, priorActions: []
+    });
+    const ad = output.recommendations.find((item) => item.entityLevel === "AD");
+    // Reported cost 1,800d against a 2,500d qualified target at a 75% rate is a
+    // 1,875d reported target, so the entity and the plan panel must agree.
+    expect(ad?.targetMetric).toBeCloseTo(1875, 5);
+    expect(ad?.weightedAchievement).toBeCloseTo(1875 / 1800, 3);
+    expect(summary.achievement).toBeCloseTo(1875 / 1800, 3);
+  });
+
+  it("leaves the target alone for metrics that are not a cost per result", () => {
+    const roas: MetricDefinition = {
+      key: "ROAS", label: "ROAS", kind: "RATIO", numerator: "revenue", denominator: "spend",
+      multiplier: 1, direction: "HIGHER_IS_BETTER", nullWhenDenominatorZero: true
+    };
+    const { scope } = scaffold({ planTarget: 3, estimateRate: 0.75 });
+    expect(effectivePlanTarget(scope, roas)).toBe(3);
   });
 });
 

@@ -16,8 +16,8 @@ import { WORKSPACE_VIEW_LABELS, WorkspaceSidebar } from "./shell/workspace-sideb
 import { WorkspaceTopbar } from "./shell/workspace-topbar";
 import { OverviewView } from "./views/overview-view";
 import { ProjectSetupView } from "./views/project-setup-view";
-import { DecisionBoard, type SourceSyncResponse } from "./views/decision-board";
-import { ActionQueue } from "./views/action-queue";
+import type { SourceSyncResponse } from "./views/decision-types";
+import { OperationsView } from "./views/operations-view";
 import { RunsAudit } from "./views/runs-audit";
 import { DataImporter } from "./data-importer";
 import { RuleManager } from "./rule-manager";
@@ -406,28 +406,15 @@ function WorkspaceShell({ team }: { team?: TeamIdentity }) {
               notify={notify}
             />
           )}
-          {project && workspace.activeView === "DECISIONS" && (
-            <DecisionBoard
+          {project && workspace.activeView === "OPERATIONS" && (
+            <OperationsView
               key={project.config.projectId}
               project={project}
               onProjectChange={(p) => updateProject(p, { syncConfig: false })}
               teamApi={team?.api ?? null}
-              toast={notify}
-              onSync={() => syncProjectFromSource(project.config.projectId)}
-              onAnalyzeAction={(actionId) => {
-                setAiActionId(actionId);
-                setView("AI");
-              }}
-            />
-          )}
-          {project && workspace.activeView === "ACTIONS" && (
-            <ActionQueue
-              key={project.config.projectId}
-              project={project}
-              onProjectChange={(p) => updateProject(p, { syncConfig: false })}
               operatorName={workspace.operatorName}
               toast={notify}
-              teamApi={team?.api ?? null}
+              onSync={() => syncProjectFromSource(project.config.projectId)}
               onAnalyzeAction={(actionId) => {
                 setAiActionId(actionId);
                 setView("AI");

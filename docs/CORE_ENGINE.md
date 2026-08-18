@@ -106,6 +106,22 @@ Rules independently select a score source (`TODAY`, `SHORT`, `LONG`, `LIFETIME`,
 6. If top-priority rules produce different actions, return `REVIEW_MANUALLY`.
 7. Apply budget ownership and scale guardrails.
 
+## Plan target and the estimate rate
+
+A scope may state its plan target as a cost per *qualified* result while the
+platform only reports raw results. `scope.estimateRate` is the share of reported
+results expected to survive qualification, and it converts between the two:
+
+- Reported-result target = `planTarget × estimateRate`
+- Reported-result volume target = `planTargetResults / estimateRate`
+- Estimated qualified results = `reportedResults × estimateRate`
+
+Entities are scored against the reported-result target, because that is the
+scale their own metric is measured on. Scoring a reported cost directly against
+a qualified target makes every entity look better than the account summary,
+which compares like for like. The conversion applies only to metrics whose
+denominator is a result count; a ROAS target is left alone.
+
 ## Peer comparison
 
 Each scope can benchmark an entity against its peers over a lookback window.

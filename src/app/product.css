@@ -79,3 +79,71 @@ h1,h2,h3,p{margin-top:0}h1{margin-bottom:4px;font-size:clamp(24px,3vw,30px);lett
 .scopeTabs{display:flex;gap:8px;overflow:auto;border-bottom:1px solid var(--border);padding:13px 18px}.scopeTabs button{display:flex;min-width:150px;align-items:flex-start;flex-direction:column;gap:2px;border:1px solid var(--border);border-radius:8px;padding:9px 11px;background:#fff;color:var(--ink);text-align:left}.scopeTabs button.active{border-color:#8ea7e2;background:#f2f6ff;color:var(--primary)}.scopeTabs small{color:var(--muted);font-size:9px}.dynamicWindows{overflow-x:auto}.dynamicWindows article{min-width:250px}.windowCardTitle{display:flex;align-items:center;justify-content:space-between;gap:8px}.classificationRows{display:flex;flex-direction:column;gap:8px;padding:0 18px 18px}.classificationRow{display:grid;grid-template-columns:1.2fr 1.2fr .7fr 1.5fr 1.1fr 80px 38px;align-items:end;gap:7px;border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--surface-soft)}.classificationRow label{display:flex;min-width:0;flex-direction:column;gap:4px;color:#4f5e75;font-size:10px;font-weight:600}.classificationRow input,.classificationRow select{width:100%;min-width:0;min-height:36px;border:1px solid #d7dee9;border-radius:6px;padding:0 8px;background:#fff;color:var(--ink);font-size:11px}.classificationRow .iconAction{width:38px;height:36px}.scopeHint{margin:0 18px 16px;border-radius:8px;padding:11px 13px;background:var(--blue-bg);color:#294b91;font-size:11px}.classificationSummary{display:flex;flex-wrap:wrap;gap:7px;padding:0 18px 16px}.classificationSummary span{border-radius:999px;padding:5px 9px;background:#eef1f5;color:#596579;font:600 10px "Fira Code"}.classificationSummary .included{background:var(--success-bg);color:var(--success)}.classificationSummary .excluded{background:var(--danger-bg);color:var(--danger)}.classificationSummary .review{background:var(--warning-bg);color:var(--warning)}
 @media(max-width:1180px){.classificationRow{grid-template-columns:repeat(3,minmax(0,1fr))}.classificationRow .iconAction{align-self:end}}
 @media(max-width:560px){.classificationRow{grid-template-columns:1fr}.classificationRow input,.classificationRow select{font-size:16px}.scopeTabs button{min-width:135px}}
+
+/* ── Điều hành: plan overview, bands, merged decision table ───────────────── */
+.planOverview .sectionHeader .rotated{transform:rotate(-90deg);transition:transform var(--motion)}
+.planGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;padding:0 18px 16px}
+.planBlock{display:flex;margin:0;flex-direction:column;gap:2px;border:1px solid var(--border);border-radius:10px;padding:12px 13px;background:var(--surface-soft)}
+.planBlockTitle{margin-bottom:6px;color:var(--muted);font:700 9.5px "Fira Code";letter-spacing:.09em;text-transform:uppercase}
+.planFigure{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:6px;padding:4px 0;border-bottom:1px dashed var(--border-soft)}
+.planFigure:last-child{border-bottom:0}
+.planFigure dt{color:#4f5e75;font-size:11px}
+.planFigure dd{margin:0;color:var(--ink);font:600 12.5px "Fira Code";font-variant-numeric:tabular-nums;text-align:right}
+.planFigure small{grid-column:1/-1;color:var(--subtle);font-size:10px}
+.planFigure.band-off dd{color:var(--danger)}.planFigure.band-watch dd{color:var(--warning)}
+.planFigure.band-keep dd{color:var(--success)}.planFigure.band-scale dd{color:var(--primary)}
+.weightRow{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0}
+.weightRow>span{color:#4f5e75;font-size:11px}
+.weightRow>div{display:flex;flex-wrap:wrap;gap:5px}
+.weightRow b.muted{color:var(--subtle);background:#f4f6fa}
+.weightRow b{border-radius:999px;padding:3px 8px;background:#fff;border:1px solid var(--border);font:600 10px "Fira Code"}
+.bandTable{width:100%;margin-top:8px;border-collapse:collapse}
+.bandTable td{padding:4px 5px;border-top:1px solid var(--border-soft);font-size:10.5px}
+.bandTable tr.current{background:#fff;box-shadow:inset 2px 0 0 var(--primary)}
+.bandPill{display:inline-block;border-radius:999px;padding:2px 8px;font:600 10px "Fira Code";white-space:nowrap}
+.bandPill.band-off{background:var(--danger-bg);color:var(--danger)}
+.bandPill.band-watch{background:var(--warning-bg);color:var(--warning)}
+.bandPill.band-keep{background:var(--success-bg);color:var(--success)}
+.bandPill.band-scale{background:var(--blue-bg);color:var(--primary)}
+.bandPill.band-unknown{background:#eef1f5;color:var(--subtle)}
+.planNote{display:flex;margin:9px 0 0;align-items:flex-start;gap:6px;border-radius:8px;padding:8px 9px;background:var(--blue-bg);color:#294b91;font-size:10.5px;line-height:1.45}
+.planNote svg{flex:0 0 auto;margin-top:1px}
+.planWarning{display:flex;margin:0 18px 16px;align-items:flex-start;gap:11px;border:1px solid #f0c4c9;border-radius:10px;padding:12px 14px;background:var(--danger-bg);color:#7c1d26}
+.planWarning strong{display:block;margin-bottom:3px;font-size:12.5px}
+.planWarning span{font-size:11px;line-height:1.5}
+.windowStrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;padding:0 18px 14px}
+.windowStrip article{border:1px solid var(--border);border-radius:10px;padding:11px 12px;background:#fff}
+.windowStrip header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
+.windowStrip header strong{font-size:12px}
+.windowStrip dl{display:flex;margin:0;flex-direction:column;gap:3px}
+.windowStrip dl>div{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.windowStrip dt{color:var(--muted);font-size:10.5px}
+.windowStrip dd{margin:0;font-size:11.5px;font-variant-numeric:tabular-nums}
+.pacingStrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:0 18px 14px}
+.pacingStrip article{border:1px solid var(--border);border-radius:10px;padding:11px 12px;background:#fff}
+.pacingStrip article.highlight{border-color:#c9b07a;background:#fffaf0}
+.pacingStrip small{display:block;color:var(--muted);font-size:10.5px}
+.pacingStrip strong{display:block;margin:3px 0;font:700 17px "Fira Code";font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.pacingStrip strong.behind{color:var(--danger)}.pacingStrip strong.ahead{color:var(--success)}
+.pacingStrip em{color:var(--subtle);font-size:10px;font-style:normal;line-height:1.4}
+.planFootnote{margin:0;padding:0 18px 16px;color:var(--subtle);font-size:10.5px}
+.fieldHint{display:block;margin-top:3px;color:var(--subtle);font-size:10px;font-weight:400;line-height:1.4}
+.scoreValue{font:700 13px "Fira Code";font-variant-numeric:tabular-nums}
+.scoreValue.band-off{color:var(--danger)}.scoreValue.band-watch{color:var(--warning)}
+.scoreValue.band-keep{color:var(--success)}.scoreValue.band-scale{color:var(--primary)}
+.scoreValue.band-unknown{color:var(--subtle)}
+.scoreMeter{position:relative;display:block;width:96px;height:5px;margin:4px 0 3px;border-radius:999px;background:#e7ecf3;overflow:hidden}
+.scoreMeter::before,.scoreMeter::after{position:absolute;top:0;bottom:0;width:1px;background:#b9c4d4;content:""}
+.scoreMeter::before{left:53.33%}.scoreMeter::after{left:66.67%}
+.scoreMeter u{position:absolute;top:0;bottom:0;left:80%;width:1px;background:#b9c4d4}
+.scoreMeter i{display:block;height:100%;border-radius:999px}
+.scoreMeter i.band-off{background:var(--danger)}.scoreMeter i.band-watch{background:#d99206}
+.scoreMeter i.band-keep{background:var(--success)}.scoreMeter i.band-scale{background:var(--primary)}
+.reasonCell{max-width:250px;color:#4f5e75;font-size:11px;line-height:1.45;white-space:normal}
+.mutedCell{color:var(--subtle)}
+.stickyTable thead th{position:sticky;top:0;z-index:2;background:var(--surface-soft);box-shadow:inset 0 -1px 0 var(--border)}
+.dangerAction.small,.primaryAction.small{min-height:30px;padding:0 10px;font-size:11px}
+.drawerActionBar{display:flex;flex-direction:column;gap:9px;margin:0 0 14px;border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--surface-soft)}
+@media(max-width:900px){.planGrid,.windowStrip,.pacingStrip{grid-template-columns:1fr}.reasonCell{max-width:none}}
+
+.metricStrip{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}

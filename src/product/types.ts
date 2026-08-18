@@ -90,11 +90,11 @@ export type WorkspaceState = {
 
 export type WorkspaceView =
   | "OVERVIEW"
+  /** Decisions and their execution, previously split across DECISIONS and ACTIONS. */
+  | "OPERATIONS"
   | "PROJECT_SETUP"
   | "DATA_IMPORT"
   | "RULES"
-  | "DECISIONS"
-  | "ACTIONS"
   | "AI"
   | "RUNS";
 
