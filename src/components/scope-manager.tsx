@@ -55,7 +55,22 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
 
   function patchScope(patch: Partial<OptimizationScope>) {
     if (!selected) return;
-    saveScopes(scopes.map((scope) => scope.scopeId === selected.scopeId ? { ...scope, ...patch } : scope));
+    const nextScopes = scopes.map((scope) => scope.scopeId === selected.scopeId ? { ...scope, ...patch } : scope);
+
+    // The engine only matches a rule whose metricKey equals the scope's primary
+    // KPI. Changing the KPI without carrying the rules over silently orphans
+    // every rule in the set, and the whole scope falls through to manual review
+    // with no visible cause. Switching KPI is the normal move when a project
+    // splits one account into a scope per objective, so it has to carry.
+    const nextRules = patch.primaryMetricKey && patch.primaryMetricKey !== selected.primaryMetricKey
+      ? project.rules.map((rule) => (
+          rule.ruleSetId === selected.ruleSetId
+            ? { ...rule, metricKey: patch.primaryMetricKey as string }
+            : rule
+        ))
+      : project.rules;
+
+    saveScopes(nextScopes, nextRules);
   }
 
   function addScope() {
