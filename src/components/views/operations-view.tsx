@@ -3,9 +3,7 @@
 import { useMemo, useState } from "react";
 import {
   Activity,
-  AlertTriangle,
   CheckCircle2,
-  ChevronRight,
   CircleDollarSign,
   Hourglass,
   Play,
@@ -14,7 +12,8 @@ import {
   ShieldAlert,
   Sparkles,
   X,
-  XCircle
+  XCircle,
+  AlertTriangle
 } from "lucide-react";
 import type { ActionEvent, ActionRecord, ApprovalStatus } from "@/core/actions";
 import { apiJson } from "@/product/api";
@@ -36,10 +35,28 @@ export type OperationsViewProps = {
 };
 
 type StatusFilter = "ALL" | "TODO" | "DONE";
-type ActionFilter = "ALL" | "NEEDS_ACTION" | ActionRecord["recommendedAction"];
+type ActionFilter = "ALL" | ActionRecord["recommendedAction"] | "BUDGET";
 
 const PAGE_SIZE = 60;
 const entityKey = (scopeId: string, level: string, id: string) => `${scopeId}|${level}|${id}`;
+
+/**
+ * The counters double as the primary filter. Reading "49 cần tắt" and then
+ * hunting for them in a 998-row table was the slowest step of the old flow.
+ */
+const CHIPS: Array<{
+  id: ActionFilter;
+  label: string;
+  hint: string;
+  tone: string;
+  icon: typeof XCircle;
+}> = [
+  { id: "TURN_OFF", label: "Cần tắt", hint: "đang đốt tiền dưới ngưỡng", tone: "off", icon: XCircle },
+  { id: "BUDGET", label: "Đổi ngân sách", hint: "cấp giữ ngân sách", tone: "scale", icon: CircleDollarSign },
+  { id: "KEEP", label: "Giữ nguyên", hint: "đang đạt ngưỡng", tone: "keep", icon: CheckCircle2 },
+  { id: "REVIEW_MANUALLY", label: "Review tay", hint: "engine không tự quyết", tone: "watch", icon: AlertTriangle },
+  { id: "PENDING_DATA", label: "Chưa đủ dữ liệu", hint: "chờ thêm bằng chứng", tone: "idle", icon: Hourglass }
+];
 
 export function OperationsView({
   project,
@@ -57,6 +74,7 @@ export function OperationsView({
   const [asOfDate, setAsOfDate] = useState(latestFactDate ?? new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [scopeFilter, setScopeFilter] = useState("ALL");
   const [level, setLevel] = useState<"ALL" | "CAMPAIGN" | "ADSET" | "AD">("ALL");
   const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
@@ -70,12 +88,8 @@ export function OperationsView({
   const summaries = run?.summaries ?? [];
   const source = project.config.dataSource;
   const canSync = source.kind === "GOOGLE_SHEETS" && Boolean(onSync);
+  const multiScope = summaries.length > 1;
 
-  /**
-   * One open action per entity. The queue used to live on its own screen, so
-   * the same entity could show a decision here and a stale pending action
-   * there with no way to line them up.
-   */
   const openActionByEntity = useMemo(() => {
     const map = new Map<string, ActionRecord>();
     [...project.actions]
@@ -111,37 +125,49 @@ export function OperationsView({
     };
   }), [recommendations, openActionByEntity, settledActionByEntity]);
 
+  const scopeRows = useMemo(
+    () => (scopeFilter === "ALL" ? rows : rows.filter((row) => row.decision.scopeId === scopeFilter)),
+    [rows, scopeFilter]
+  );
+
   const needsAction = (row: Row) =>
     row.decision.recommendedAction !== "KEEP" && row.decision.recommendedAction !== "PENDING_DATA";
 
+  const matchesChip = (row: Row, chip: ActionFilter) => {
+    if (chip === "ALL") return true;
+    if (chip === "BUDGET") {
+      return row.decision.recommendedAction === "INCREASE_BUDGET"
+        || row.decision.recommendedAction === "DECREASE_BUDGET";
+    }
+    return row.decision.recommendedAction === chip;
+  };
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return rows.filter((row) => {
+    return scopeRows.filter((row) => {
       if (level !== "ALL" && row.decision.entityLevel !== level) return false;
-      if (actionFilter === "NEEDS_ACTION" && !needsAction(row)) return false;
-      if (actionFilter !== "ALL" && actionFilter !== "NEEDS_ACTION"
-        && row.decision.recommendedAction !== actionFilter) return false;
+      if (!matchesChip(row, actionFilter)) return false;
       if (statusFilter === "TODO" && !(needsAction(row) && !row.settled)) return false;
       if (statusFilter === "DONE" && !row.settled) return false;
       if (query && !`${row.decision.entityName} ${row.decision.entityId}`.toLowerCase().includes(query)) return false;
       return true;
     });
-  }, [rows, level, actionFilter, statusFilter, search]);
+  }, [scopeRows, level, actionFilter, statusFilter, search]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const counts = {
-    TURN_OFF: recommendations.filter((item) => item.recommendedAction === "TURN_OFF").length,
-    BUDGET: recommendations.filter(
-      (item) => item.recommendedAction === "INCREASE_BUDGET" || item.recommendedAction === "DECREASE_BUDGET"
-    ).length,
-    KEEP: recommendations.filter((item) => item.recommendedAction === "KEEP").length,
-    REVIEW: recommendations.filter((item) => item.recommendedAction === "REVIEW_MANUALLY").length,
-    PENDING_DATA: recommendations.filter((item) => item.recommendedAction === "PENDING_DATA").length
-  };
-  const todoCount = rows.filter((row) => needsAction(row) && !row.settled).length;
+  const chipCount = (chip: ActionFilter) => scopeRows.filter((row) => matchesChip(row, chip)).length;
+  const todoCount = scopeRows.filter((row) => needsAction(row) && !row.settled).length;
+
+  // Repeating one target on 998 rows is noise, but scopes can have different
+  // targets, so it only belongs in the header when every visible row shares it.
+  const targets = new Set(scopeRows.map((row) => row.decision.targetMetric));
+  const rowTarget = targets.size === 1 ? [...targets][0] : null;
+  const isMoneyMetric = !["ROAS", "CTR", "CVR"].includes(project.config.primaryMetricKey);
+  const money = (value: number | null | undefined) =>
+    formatNumber(value ?? null, isMoneyMetric ? project.config.currency : undefined);
 
   async function refreshSource() {
     if (!onSync) return;
@@ -155,8 +181,8 @@ export function OperationsView({
   }
 
   async function executeRun() {
-    if (!project.facts.length) return toast("Chưa có fact rows. Hãy import data trước.", "error");
-    if (!project.rules.some((rule) => rule.enabled)) return toast("Không có rule enabled.", "error");
+    if (!project.facts.length) return toast("Chưa có dữ liệu. Hãy import trước.", "error");
+    if (!project.rules.some((rule) => rule.enabled)) return toast("Không có rule nào đang bật.", "error");
     setBusy(true);
     try {
       const runAt = new Date().toISOString();
@@ -193,9 +219,9 @@ export function OperationsView({
       });
       if (output.status === "BLOCKED")
         toast(`Run bị chặn: ${output.qc.issues.map((item) => item.code).join(", ")}`, "error");
-      else toast(`Engine hoàn tất: ${output.recommendations.length} quyết định · ${newActions.length} việc mới.`, "success");
+      else toast(`Xong: ${output.recommendations.length} quyết định · ${newActions.length} việc mới.`, "success");
     } catch (error) {
-      toast(error instanceof Error ? error.message : "Engine run thất bại.", "error");
+      toast(error instanceof Error ? error.message : "Chạy engine thất bại.", "error");
     } finally {
       setBusy(false);
     }
@@ -213,26 +239,17 @@ export function OperationsView({
     const at = new Date().toISOString();
     const actor = operatorName.trim() || "Media Buyer";
     const event: ActionEvent = {
-      id: crypto.randomUUID(),
-      actionId: action.id,
-      at,
-      actor,
-      from: action.approvalStatus,
-      to,
-      note: noteText
+      id: crypto.randomUUID(), actionId: action.id, at, actor,
+      from: action.approvalStatus, to, note: noteText
     };
     if (teamApi) {
       try {
         await teamApi(
           `/api/projects/${encodeURIComponent(project.config.projectId)}/actions/${encodeURIComponent(action.id)}`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ to, at, note: noteText })
-          }
+          { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ to, at, note: noteText }) }
         );
       } catch (error) {
-        return toast(error instanceof Error ? error.message : "ACTION_UPDATE_FAILED", "error");
+        return toast(error instanceof Error ? error.message : "Cập nhật thất bại.", "error");
       }
     }
     onProjectChange({
@@ -245,52 +262,45 @@ export function OperationsView({
       actionLog: [event, ...project.actionLog],
       updatedAt: at
     });
-    toast(to === "DONE" ? "Đã đánh dấu hoàn tất." : to === "REJECTED" ? "Đã từ chối đề xuất." : "Đã hoãn lại.", "success");
+    toast(to === "DONE" ? "Đã đánh dấu hoàn tất." : to === "REJECTED" ? "Đã bỏ đề xuất." : "Đã hoãn.", "success");
   }
-
-  const isMoneyMetric = !["ROAS", "CTR", "CVR"].includes(project.config.primaryMetricKey);
-  const money = (value: number | null | undefined) =>
-    formatNumber(value ?? null, isMoneyMetric ? project.config.currency : undefined);
 
   const selectedRow = selected
     ? rows.find((row) => entityKey(row.decision.scopeId, row.decision.entityLevel, row.decision.entityId)
         === entityKey(selected.scopeId, selected.entityLevel, selected.entityId)) ?? null
     : null;
 
+  function openRow(row: Row) {
+    setSelected(row.decision);
+    setNote(row.action?.note ?? "");
+  }
+
   return (
-    <div className="viewStack">
-      <section className="runBar">
-        <div>
-          <span className="sectionKicker">ENGINE</span>
-          <strong>Chạy bottom-up: Ad → Ad set → Campaign</strong>
-          <small>
-            {project.facts.length.toLocaleString("vi-VN")} dòng dữ liệu ·{" "}
-            {project.rules.filter((rule) => rule.enabled).length} rule đang bật
-            {run ? ` · chạy lúc ${new Date(run.runAt).toLocaleString("vi-VN")}` : " · chưa chạy lần nào"}
-          </small>
-          {source.kind === "GOOGLE_SHEETS" && (
-            <small>
-              Google Sheets ·{" "}
-              {source.autoSyncEnabled
-                ? `tự refresh mỗi ${source.syncIntervalMinutes} phút khi tool đang mở`
-                : "auto refresh đang tắt"}
-              {source.lastSyncedAt ? ` · lần cuối ${new Date(source.lastSyncedAt).toLocaleString("vi-VN")}` : " · chưa refresh"}
-            </small>
-          )}
+    <div className="viewStack opsView">
+      <section className="commandBar">
+        <div className="commandMeta">
+          <strong>{project.facts.length.toLocaleString("vi-VN")} dòng dữ liệu</strong>
+          <span>
+            {run ? `chạy lúc ${new Date(run.runAt).toLocaleString("vi-VN")}` : "chưa chạy lần nào"}
+            {run ? ` · dữ liệu đến ${run.asOfDate ?? "N/A"}` : ""}
+            {source.kind === "GOOGLE_SHEETS" && source.lastSyncedAt
+              ? ` · sheet đồng bộ ${new Date(source.lastSyncedAt).toLocaleTimeString("vi-VN")}`
+              : ""}
+          </span>
         </div>
-        <label>
-          Dữ liệu đến ngày
+        <label className="commandDate">
+          Dữ liệu đến
           <input type="date" value={asOfDate} onChange={(event) => setAsOfDate(event.target.value)} />
         </label>
         {canSync && (
-          <button className="secondaryAction large" onClick={() => void refreshSource()} disabled={syncing || busy}>
-            <RefreshCw className={syncing ? "spin" : ""} size={17} />
-            {syncing ? "Đang refresh…" : source.autoRunAfterSync ? "Refresh & chạy lại" : "Refresh data"}
+          <button className="secondaryAction" onClick={() => void refreshSource()} disabled={syncing || busy}>
+            <RefreshCw className={syncing ? "spin" : ""} size={16} />
+            {syncing ? "Đang refresh" : "Refresh"}
           </button>
         )}
         <button className="primaryAction large" onClick={executeRun} disabled={busy || syncing}>
           {busy ? <RefreshCw className="spin" size={17} /> : <Play size={17} />}
-          {busy ? "Đang chạy…" : "Chạy tối ưu"}
+          {busy ? "Đang chạy" : "Chạy tối ưu"}
         </button>
       </section>
 
@@ -303,7 +313,6 @@ export function OperationsView({
             config={project.config}
             contextWeights={project.config.contextWeights.AD}
             contextSource={scope?.contextSource ?? "PARENT"}
-            accountAchievement={summary.achievement}
             windowWeights={(scope?.windows ?? project.config.windows).map((window) => ({
               id: window.id,
               label: window.label ?? window.id,
@@ -313,194 +322,165 @@ export function OperationsView({
         );
       })}
 
-      <section className="metricStrip">
-        <article>
-          <span className="metricIcon red"><XCircle size={18} /></span>
-          <div><small>Cần tắt</small><strong>{counts.TURN_OFF}</strong><em>ad / ad set / campaign</em></div>
-        </article>
-        <article>
-          <span className="metricIcon green"><CircleDollarSign size={18} /></span>
-          <div><small>Đổi ngân sách</small><strong>{counts.BUDGET}</strong><em>cấp giữ ngân sách</em></div>
-        </article>
-        <article>
-          <span className="metricIcon blue"><CheckCircle2 size={18} /></span>
-          <div><small>Giữ nguyên</small><strong>{counts.KEEP}</strong><em>đang đạt ngưỡng</em></div>
-        </article>
-        <article>
-          <span className="metricIcon amber"><AlertTriangle size={18} /></span>
-          <div><small>Cần review tay</small><strong>{counts.REVIEW}</strong><em>engine không tự quyết</em></div>
-        </article>
-        <article>
-          <span className="metricIcon teal"><Hourglass size={18} /></span>
-          <div><small>Chưa đủ dữ liệu</small><strong>{counts.PENDING_DATA}</strong><em>chờ thêm bằng chứng</em></div>
-        </article>
+      <section className="chipRow" role="group" aria-label="Lọc theo đề xuất">
+        {CHIPS.map((chip) => {
+          const Icon = chip.icon;
+          const active = actionFilter === chip.id;
+          return (
+            <button
+              key={chip.id}
+              className={`decisionChip band-${chip.tone}${active ? " active" : ""}`}
+              aria-pressed={active}
+              onClick={() => { setActionFilter(active ? "ALL" : chip.id); setPage(1); }}
+            >
+              <Icon size={17} />
+              <strong>{chipCount(chip.id).toLocaleString("vi-VN")}</strong>
+              <span>{chip.label}</span>
+              <small>{chip.hint}</small>
+            </button>
+          );
+        })}
       </section>
 
-      <section className="sectionCard">
-        <div className="sectionHeader filtersHeader">
-          <div>
-            <span className="sectionKicker">QUYẾT ĐỊNH VÀ THỰC THI</span>
+      <section className="sectionCard tableCard">
+        <div className="tableHead">
+          <div className="tableHeadTitle">
             <h2>Bảng điều hành</h2>
             <p>
-              {run
-                ? `Dữ liệu đến ${run.asOfDate ?? "N/A"} · QC ${run.qc.status} · còn ${todoCount} việc chưa xử lý`
-                : "Chưa có lần chạy nào."}
-              {" "}V1 không gọi Meta API: thao tác trong Ads Manager rồi đánh dấu lại ở đây.
+              Còn <b>{todoCount.toLocaleString("vi-VN")}</b> việc chưa xử lý
+              {rowTarget !== null && <> · target mọi dòng <b>{money(rowTarget)}</b></>}
+              {run?.qc.status && <> · QC {run.qc.status}</>}
             </p>
           </div>
           <div className="filterBar">
             <label className="compactSearch">
               <Search size={15} />
               <input
-                type="search"
-                value={search}
+                type="search" value={search} placeholder="Tìm entity…"
                 onChange={(event) => { setSearch(event.target.value); setPage(1); }}
-                placeholder="Tìm entity…"
               />
             </label>
+            {multiScope && (
+              <select value={scopeFilter} onChange={(event) => { setScopeFilter(event.target.value); setPage(1); }}>
+                <option value="ALL">Tất cả nhóm KPI</option>
+                {summaries.map((summary) => (
+                  <option key={summary.scopeId} value={summary.scopeId}>{summary.scopeName}</option>
+                ))}
+              </select>
+            )}
             <select value={level} onChange={(event) => { setLevel(event.target.value as typeof level); setPage(1); }}>
-              <option value="ALL">Tất cả cấp</option>
+              <option value="ALL">Mọi cấp</option>
               <option value="CAMPAIGN">Campaign</option>
               <option value="ADSET">Ad set</option>
               <option value="AD">Ad</option>
-            </select>
-            <select value={actionFilter} onChange={(event) => { setActionFilter(event.target.value as ActionFilter); setPage(1); }}>
-              <option value="ALL">Tất cả đề xuất</option>
-              <option value="NEEDS_ACTION">Cần làm gì đó</option>
-              <option value="TURN_OFF">Tắt</option>
-              <option value="DECREASE_BUDGET">Giảm ngân sách</option>
-              <option value="INCREASE_BUDGET">Tăng ngân sách</option>
-              <option value="KEEP">Giữ</option>
-              <option value="REVIEW_MANUALLY">Review tay</option>
-              <option value="PENDING_DATA">Chưa đủ dữ liệu</option>
             </select>
             <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}>
               <option value="ALL">Mọi trạng thái</option>
               <option value="TODO">Chưa xử lý</option>
               <option value="DONE">Đã xử lý</option>
             </select>
+            {(actionFilter !== "ALL" || statusFilter !== "ALL" || level !== "ALL" || search || scopeFilter !== "ALL") && (
+              <button
+                className="linkAction"
+                onClick={() => {
+                  setActionFilter("ALL"); setStatusFilter("ALL"); setLevel("ALL");
+                  setSearch(""); setScopeFilter("ALL"); setPage(1);
+                }}
+              >
+                Xoá lọc
+              </button>
+            )}
           </div>
         </div>
-
-        {run?.classificationSummary && (
-          <div className="classificationSummary">
-            <span className="included">Được tối ưu: {run.classificationSummary.pfmIncluded.toLocaleString("vi-VN")} dòng</span>
-            <span className="excluded">Đã loại: {run.classificationSummary.nonPfmExcluded.toLocaleString("vi-VN")} dòng</span>
-            <span className="review">Chưa phân loại: {run.classificationSummary.reviewUnclassified.toLocaleString("vi-VN")} dòng</span>
-          </div>
-        )}
 
         {!run ? (
           <div className="emptyState">
             <Activity size={28} />
             <strong>Chưa có quyết định nào</strong>
-            <span>Import dữ liệu, kiểm tra rule, rồi bấm Chạy tối ưu.</span>
+            <span>Import dữ liệu rồi bấm Chạy tối ưu.</span>
           </div>
         ) : run.status === "BLOCKED" ? (
           <div className="blockedState">
-            <ShieldAlert size={30} />
+            <ShieldAlert size={28} />
             <div>
               <strong>Engine đã chặn để không tạo ra hành động sai</strong>
-              {run.qc.issues.map((issue) => <p key={issue.code}><b>{issue.code}</b> · {issue.message}</p>)}
+              {run.qc.issues.map((issue) => <p key={issue.code}>{issue.message}</p>)}
             </div>
           </div>
         ) : !filtered.length ? (
           <div className="emptyState">
             <Activity size={28} />
             <strong>Không có dòng nào khớp bộ lọc</strong>
-            <span>Đổi bộ lọc hoặc xoá từ khoá tìm kiếm.</span>
+            <span>Bấm “Xoá lọc” để xem lại toàn bộ.</span>
           </div>
         ) : (
           <div className="tableScroller">
-            <table className="dataTable decisionTable stickyTable">
+            <table className="opsTable">
               <thead>
                 <tr>
                   <th>Entity</th>
-                  <th>KPI hôm nay</th>
-                  <th>Điểm đạt target</th>
+                  <th className="numeric">KPI hôm nay</th>
+                  <th className="scoreCol">Điểm đạt target</th>
                   <th>Đề xuất</th>
-                  <th>Lý do</th>
                   <th>Xử lý</th>
-                  <th />
                 </tr>
               </thead>
               <tbody>
-                {paged.map(({ decision, action, settled }) => {
-                  const band = achievementBand(decision.blendedAchievement ?? decision.weightedAchievement);
+                {paged.map((row) => {
+                  const { decision, action, settled } = row;
+                  const score = decision.blendedAchievement ?? decision.weightedAchievement;
+                  const band = achievementBand(score);
+                  // The band rule is already legible from the score and the action
+                  // pill, so only an override earns a line of prose.
+                  const overrides = decision.reasonCodes.filter((code) => !code.startsWith("RULE_"));
                   return (
-                    <tr key={entityKey(decision.scopeId, decision.entityLevel, decision.entityId)}>
-                      <td>
+                    <tr
+                      key={entityKey(decision.scopeId, decision.entityLevel, decision.entityId)}
+                      className={`band-edge-${band}`}
+                      onClick={() => openRow(row)}
+                      tabIndex={0}
+                      onKeyDown={(event) => { if (event.key === "Enter") openRow(row); }}
+                    >
+                      <td className="entityCell">
                         <span className={`levelPill ${decision.entityLevel.toLowerCase()}`}>{decision.entityLevel}</span>
                         <strong>{decision.entityName}</strong>
-                        <small className="mono">{decision.entityId}</small>
+                        <small className="mono">
+                          {[
+                            decision.entityId === decision.entityName ? null : decision.entityId,
+                            multiScope ? decision.scopeName : null
+                          ].filter(Boolean).join(" · ")}
+                        </small>
+                        {overrides.length > 0 && <em className="overrideNote">{reasonSentence(overrides)}</em>}
                       </td>
-                      <td className="mono">
-                        {money(decision.currentMetric)}
-                        <small>Target {money(decision.targetMetric)}</small>
-                      </td>
-                      <td>
-                        <span className={`scoreValue band-${band}`}>
-                          {formatPercent(decision.blendedAchievement ?? decision.weightedAchievement)}
-                        </span>
+                      <td className="numeric mono">{money(decision.currentMetric)}</td>
+                      <td className="scoreCol">
+                        <span className={`scoreValue band-${band}`}>{formatPercent(score)}</span>
                         <span className="scoreMeter" aria-hidden="true">
-                          <i
-                            className={`band-${band}`}
-                            style={{
-                              width: `${Math.min(100, Math.max(0, ((decision.blendedAchievement ?? decision.weightedAchievement) ?? 0) / 1.5 * 100))}%`
-                            }}
-                          />
+                          <i className={`band-${band}`} style={{ width: `${Math.min(100, Math.max(0, (score ?? 0) / 1.5 * 100))}%` }} />
                           <u />
                         </span>
-                        <small>
-                          {decision.blendedAchievement !== undefined
-                            && decision.blendedAchievement !== null
-                            && decision.blendedAchievement !== decision.weightedAchievement
-                            ? `riêng entity ${formatPercent(decision.weightedAchievement)}`
-                            : decision.cohortRank && decision.cohortSize
-                              ? `hạng ${decision.cohortRank}/${decision.cohortSize} tài khoản`
-                              : ""}
-                        </small>
                       </td>
                       <td>
                         <span className={`actionPill action-${decision.recommendedAction.toLowerCase()}`}>
                           {actionLabel(decision.recommendedAction)}
+                          {decision.adjustmentPct !== null
+                            && ` ${decision.adjustmentPct > 0 ? "+" : ""}${Math.round(decision.adjustmentPct * 100)}%`}
                         </span>
-                        {decision.adjustmentPct !== null && (
-                          <small className="mono">
-                            {decision.adjustmentPct > 0 ? "+" : ""}{Math.round(decision.adjustmentPct * 100)}%
-                          </small>
-                        )}
                       </td>
-                      <td className="reasonCell">{reasonSentence(decision.reasonCodes)}</td>
-                      <td>
+                      <td onClick={(event) => event.stopPropagation()}>
                         {settled ? (
                           <span className={`statusBadge status-${settled.approvalStatus.toLowerCase()}`}>
-                            {settled.approvalStatus === "DONE" ? "Đã làm" : "Đã từ chối"}
+                            {settled.approvalStatus === "DONE" ? "Đã làm" : "Đã bỏ"}
                           </span>
                         ) : action ? (
                           <div className="rowActions">
-                            <button className="primaryAction small" onClick={() => void transition(action, "DONE", null)}>
-                              Đã làm
-                            </button>
-                            <button className="secondaryAction small" onClick={() => void transition(action, "DEFERRED", null)}>
-                              Hoãn
-                            </button>
-                            <button className="dangerAction small" onClick={() => void transition(action, "REJECTED", null)}>
-                              Bỏ
-                            </button>
+                            <button className="primaryAction small" onClick={() => void transition(action, "DONE", null)}>Đã làm</button>
+                            <button className="ghostAction small" onClick={() => void transition(action, "DEFERRED", null)}>Hoãn</button>
+                            <button className="ghostAction small danger" onClick={() => void transition(action, "REJECTED", null)}>Bỏ</button>
                           </div>
                         ) : (
                           <span className="mutedCell">—</span>
                         )}
-                      </td>
-                      <td>
-                        <button
-                          className="iconAction"
-                          onClick={() => { setSelected(decision); setNote(action?.note ?? ""); }}
-                          aria-label={`Xem bằng chứng ${decision.entityName}`}
-                        >
-                          <ChevronRight size={17} />
-                        </button>
                       </td>
                     </tr>
                   );
@@ -512,7 +492,7 @@ export function OperationsView({
 
         {filtered.length > PAGE_SIZE && (
           <div className="paginationBar">
-            <span>{filtered.length.toLocaleString("vi-VN")} dòng · Trang {safePage}/{pageCount}</span>
+            <span>{filtered.length.toLocaleString("vi-VN")} dòng · trang {safePage}/{pageCount}</span>
             <div>
               <button className="secondaryAction small" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Trước</button>
               <button className="secondaryAction small" disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Sau</button>
@@ -524,10 +504,7 @@ export function OperationsView({
       {selected && (
         <div className="modalBackdrop drawerBackdrop" role="presentation" onMouseDown={() => setSelected(null)}>
           <aside
-            className="evidenceDrawer"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="evidence-title"
+            className="evidenceDrawer" role="dialog" aria-modal="true" aria-labelledby="evidence-title"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="modalTitle">
@@ -539,15 +516,12 @@ export function OperationsView({
               <button className="iconAction" onClick={() => setSelected(null)} aria-label="Đóng"><X size={18} /></button>
             </div>
 
-            <div className="evidenceSummary">
+            <div className="drawerVerdict">
               <span className={`actionPill action-${selected.recommendedAction.toLowerCase()}`}>
                 {actionLabel(selected.recommendedAction)}
+                {selected.adjustmentPct !== null
+                  && ` ${selected.adjustmentPct > 0 ? "+" : ""}${Math.round(selected.adjustmentPct * 100)}%`}
               </span>
-              <strong>
-                {selected.adjustmentPct === null
-                  ? ""
-                  : `${selected.adjustmentPct > 0 ? "+" : ""}${Math.round(selected.adjustmentPct * 100)}%`}
-              </strong>
               <p>{reasonSentence(selected.reasonCodes)}</p>
             </div>
 
@@ -556,22 +530,72 @@ export function OperationsView({
                 <label className="modalTextarea">
                   Ghi chú
                   <textarea
-                    value={note}
-                    onChange={(event) => setNote(event.target.value)}
-                    placeholder="Đã kiểm tra Ads Manager / lý do từ chối / thời điểm xem lại…"
+                    value={note} onChange={(event) => setNote(event.target.value)}
+                    placeholder="Đã thao tác trong Ads Manager / lý do bỏ / khi nào xem lại…"
                   />
                 </label>
                 <div className="modalActions spread">
-                  <button className="dangerAction" onClick={() => { void transition(selectedRow.action!, "REJECTED", note || null); setSelected(null); }}>
-                    Bỏ đề xuất
-                  </button>
-                  <button className="secondaryAction" onClick={() => { void transition(selectedRow.action!, "DEFERRED", note || null); setSelected(null); }}>
-                    Hoãn
-                  </button>
+                  <button className="ghostAction danger" onClick={() => { void transition(selectedRow.action!, "REJECTED", note || null); setSelected(null); }}>Bỏ đề xuất</button>
+                  <button className="secondaryAction" onClick={() => { void transition(selectedRow.action!, "DEFERRED", note || null); setSelected(null); }}>Hoãn</button>
                   <button className="primaryAction" onClick={() => { void transition(selectedRow.action!, "DONE", note || null); setSelected(null); }}>
                     <CheckCircle2 size={16} /> Đã làm xong
                   </button>
                 </div>
+              </div>
+            )}
+
+            <dl className="evidenceList">
+              <div><dt>KPI hôm nay</dt><dd>{money(selected.currentMetric)}</dd></div>
+              <div><dt>Target</dt><dd>{money(selected.targetMetric)}</dd></div>
+              <div className="strong">
+                <dt>Điểm gộp (dùng để quyết định)</dt>
+                <dd>{formatPercent(selected.blendedAchievement ?? selected.weightedAchievement)}</dd>
+              </div>
+              <div><dt>Điểm riêng entity</dt><dd>{formatPercent(selected.weightedAchievement)}</dd></div>
+              <div><dt>Điểm nhóm cấp trên</dt><dd>{formatPercent(selected.contextWeightedAchievement)}</dd></div>
+              <div>
+                <dt>Hạng trong tài khoản</dt>
+                <dd>
+                  {selected.cohortRank && selected.cohortSize
+                    ? `${selected.cohortRank}/${selected.cohortSize} · mặt bằng ${money(selected.cohortBenchmark)}`
+                    : "N/A"}
+                </dd>
+              </div>
+              <div><dt>Cửa sổ yếu nhất</dt><dd>{formatPercent(selected.minimumWindowAchievement)}</dd></div>
+              <div><dt>Xu hướng gần đây</dt><dd>{formatPercent(selected.trendRatio)}</dd></div>
+              <div><dt>Độ dày dữ liệu</dt><dd>{formatPercent(selected.confidence)}</dd></div>
+              {selected.entityLevel !== "AD" && (
+                <div><dt>Loại ngân sách</dt><dd>{selected.budgetType}</dd></div>
+              )}
+              <div><dt>Trạng thái entity</dt><dd>{selected.currentStatus}</dd></div>
+            </dl>
+
+            {selected.windowMetrics && selected.windowMetrics.length > 0 && (
+              <div className="windowEvidence">
+                <strong>Hiệu suất theo cửa sổ</strong>
+                <table className="dataTable compactTable">
+                  <thead>
+                    <tr><th>Cửa sổ</th><th>KPI</th><th>Chi tiêu</th><th>Result</th><th>Đạt</th></tr>
+                  </thead>
+                  <tbody>
+                    {selected.windowMetrics.map((window) => (
+                      <tr key={window.id}>
+                        <td>
+                          <strong>{window.label || window.id}</strong>
+                          {!window.includeInScore && <small>chỉ tham khảo</small>}
+                        </td>
+                        <td className="mono">{money(window.value)}</td>
+                        <td className="mono">{formatNumber(window.spend, project.config.currency)}</td>
+                        <td className="mono">{formatCount(window.result, 0)}</td>
+                        <td>
+                          <span className={`bandPill band-${achievementBand(window.achievement)}`}>
+                            {formatPercent(window.achievement)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
 
@@ -581,64 +605,13 @@ export function OperationsView({
               </button>
             )}
 
-            <dl className="evidenceList">
-              <div><dt>KPI hôm nay</dt><dd>{money(selected.currentMetric)}</dd></div>
-              <div><dt>Target</dt><dd>{money(selected.targetMetric)}</dd></div>
-              <div><dt>Điểm riêng entity</dt><dd>{formatPercent(selected.weightedAchievement)}</dd></div>
-              <div><dt>Điểm gộp (dùng để quyết định)</dt><dd>{formatPercent(selected.blendedAchievement)}</dd></div>
-              <div><dt>Điểm nhóm cấp trên</dt><dd>{formatPercent(selected.contextWeightedAchievement)}</dd></div>
+            <details className="ruleTrace">
+              <summary>Mã rule và mã lý do</summary>
               <div>
-                <dt>Hạng trong tài khoản</dt>
-                <dd>{selected.cohortRank && selected.cohortSize ? `${selected.cohortRank}/${selected.cohortSize}` : "N/A"}</dd>
+                {selected.matchedRuleIds.map((id) => <code key={id}>{id}</code>)}
+                {selected.reasonCodes.map((code) => <code key={code}>{code}</code>)}
               </div>
-              <div><dt>Mặt bằng nhóm ngang hàng</dt><dd>{money(selected.cohortBenchmark)}</dd></div>
-              <div><dt>Cửa sổ yếu nhất</dt><dd>{formatPercent(selected.minimumWindowAchievement)}</dd></div>
-              <div><dt>Xu hướng gần đây</dt><dd>{formatPercent(selected.trendRatio)}</dd></div>
-              <div><dt>Độ dày dữ liệu</dt><dd>{formatPercent(selected.confidence)}</dd></div>
-              <div><dt>Loại ngân sách</dt><dd>{selected.budgetType}</dd></div>
-              <div><dt>Trạng thái entity</dt><dd>{selected.currentStatus}</dd></div>
-              <div><dt>Thứ tự thực thi</dt><dd>{selected.executionPhase}</dd></div>
-            </dl>
-
-            {selected.windowMetrics && selected.windowMetrics.length > 0 && (
-              <div className="windowEvidence">
-                <strong>Hiệu suất theo từng cửa sổ</strong>
-                <div className="tableScroller">
-                  <table className="dataTable compactTable">
-                    <thead>
-                      <tr><th>Cửa sổ</th><th>Khoảng ngày</th><th>KPI</th><th>Đạt</th><th>Chi tiêu</th><th>Result</th></tr>
-                    </thead>
-                    <tbody>
-                      {selected.windowMetrics.map((window) => (
-                        <tr key={window.id}>
-                          <td>
-                            <strong>{window.label || window.id}</strong>
-                            <small>{window.includeInScore ? "Tính điểm" : "Chỉ tham khảo"}</small>
-                          </td>
-                          <td className="mono smallText">{window.start} → {window.endExclusive}</td>
-                          <td className="mono">{money(window.value)}</td>
-                          <td className="mono">
-                            <span className={`bandPill band-${achievementBand(window.achievement)}`}>
-                              {formatPercent(window.achievement)}
-                            </span>
-                          </td>
-                          <td className="mono">{formatNumber(window.spend, project.config.currency)}</td>
-                          <td className="mono">{formatCount(window.result)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            <div className="ruleTrace">
-              <strong>Mã rule và mã lý do</strong>
-              {selected.matchedRuleIds.length
-                ? selected.matchedRuleIds.map((id) => <code key={id}>{id}</code>)
-                : <span>Không có rule nào khớp</span>}
-              {selected.reasonCodes.map((code) => <code key={code}>{code}</code>)}
-            </div>
+            </details>
           </aside>
         </div>
       )}
