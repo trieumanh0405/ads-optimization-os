@@ -57,6 +57,8 @@ export function legacyScope(config: ProjectConfig): OptimizationScope {
     primaryMetricKey: config.primaryMetricKey,
     optimizationEventLabel: config.optimizationEventLabel,
     planTarget: config.target,
+    planTargetResults: null,
+    estimateRate: null,
     ruleSetId: config.ruleSetId,
     ruleVersion: config.ruleVersion,
     windows: resolvedWindows(config.windows),

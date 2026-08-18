@@ -114,6 +114,18 @@ export const optimizationScopeSchema = z.object({
   primaryMetricKey: z.string().min(1),
   optimizationEventLabel: z.string().min(1).default("Result"),
   planTarget: z.number().positive(),
+  /**
+   * Planned volume of qualified results for the whole plan period. Needed to
+   * answer how much budget still has to be pushed to land the plan on time.
+   */
+  planTargetResults: z.number().positive().nullable().default(null),
+  /**
+   * Share of reported results expected to survive qualification, matching the
+   * reference spreadsheet's "% Estimate Rate". When set, the plan target is
+   * read as a cost per qualified result and the tool also reports the reported
+   * result cost that has to be hit to get there.
+   */
+  estimateRate: z.number().positive().max(1).nullable().default(null),
   ruleSetId: z.string().min(1),
   ruleVersion: z.number().int().positive().default(1),
   windows: z.array(windowConfigSchema).min(1),
@@ -162,6 +174,8 @@ export const projectConfigSchema = z.object({
   timezone: z.string().min(1),
   currency: z.string().length(3),
   startDate: z.string().date(),
+  /** Last day of the plan period. Pacing and required budget need an end date. */
+  planEndDate: z.string().date().nullable().default(null),
   primaryMetricKey: z.string().min(1),
   optimizationEventLabel: z.string().min(1).default("Result"),
   target: z.number().positive(),

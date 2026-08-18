@@ -26,7 +26,7 @@ const evidence = (level: "CAMPAIGN" | "ADSET" | "AD", budgetType: "CBO" | "ABO" 
   cohortRank: 1, cohortSize: 5, contextAchievement: 1, blendedAchievement: 1
 });
 const config: ProjectConfig = {
-  projectId: "P", projectName: "P", platform: "META", accountId: "act_1", timezone: "Asia/Bangkok", currency: "VND", startDate: "2026-07-01",
+  projectId: "P", projectName: "P", platform: "META", accountId: "act_1", timezone: "Asia/Bangkok", currency: "VND", startDate: "2026-07-01", planEndDate: null,
   primaryMetricKey: "CPL", optimizationEventLabel: "Lead", salesModel: "ONLINE_CHECKOUT", trackingConfidence: "HIGH", capiStatus: "UNKNOWN",
   target: 100, ruleSetId: "R", ruleVersion: 1, dataFreshnessHours: 6,
   windows: [
@@ -40,7 +40,7 @@ const config: ProjectConfig = {
 };
 const scope: OptimizationScope = {
   scopeId: "default-pfm", name: "Lead", enabled: true, primaryMetricKey: "CPL",
-  optimizationEventLabel: "Lead", planTarget: 100, ruleSetId: "R", ruleVersion: 1,
+  optimizationEventLabel: "Lead", planTarget: 100, planTargetResults: null, estimateRate: null, ruleSetId: "R", ruleVersion: 1,
   windows: config.windows, achievementCap: 2, scaleMinWindowAchievement: 1,
   contextScaleMinAchievement: 1, windowBlendMethod: "ARITHMETIC", contextSource: "PROJECT",
   cohortGuard: { enabled: true, minPlanAchievement: 0, minCohortAchievement: 1 },

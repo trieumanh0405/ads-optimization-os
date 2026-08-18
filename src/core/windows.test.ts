@@ -61,7 +61,7 @@ describe("buildEntityEvidence", () => {
   it("returns evidence for each entity", () => {
     const config: ProjectConfig = {
       projectId: "p1", projectName: "Project 1", platform: "META", accountId: "a1",
-      timezone: "UTC", currency: "USD", startDate: "2026-01-01", primaryMetricKey: "CPL",
+      timezone: "UTC", currency: "USD", startDate: "2026-01-01", planEndDate: null, primaryMetricKey: "CPL",
       optimizationEventLabel: "Lead", target: 50, salesModel: "OTHER", trackingConfidence: "HIGH",
       capiStatus: "VERIFIED", ruleSetId: "rs1", ruleVersion: 1, dataFreshnessHours: 24,
       windows: [{ id: "D7", days: 7, weight: 1.0, required: false, includeInScore: true, role: "CONFIRMATION", minSpend: 0, minResults: 0, redFlagThreshold: null }],
@@ -82,7 +82,7 @@ describe("buildEntityEvidence", () => {
 
     const scope: OptimizationScope = {
       scopeId: "s1", name: "Scope 1", enabled: true, primaryMetricKey: "CPL",
-      optimizationEventLabel: "Lead", planTarget: 50, ruleSetId: "rs1", ruleVersion: 1,
+      optimizationEventLabel: "Lead", planTarget: 50, planTargetResults: null, estimateRate: null, ruleSetId: "rs1", ruleVersion: 1,
       windows: [{ id: "D7", days: 7, weight: 1.0, required: false, includeInScore: true, role: "CONFIRMATION", minSpend: 0, minResults: 0, redFlagThreshold: null }],
       achievementCap: 2, scaleMinWindowAchievement: 1, contextScaleMinAchievement: 1,
       windowBlendMethod: "ARITHMETIC", contextSource: "PROJECT",

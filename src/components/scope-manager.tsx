@@ -194,6 +194,48 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
           </label>
           <label>Plan Target<input type="number" min="0.0001" value={selected.planTarget} onChange={(event) => patchScope({ planTarget: Number(event.target.value) })} /></label>
           <label>Result nghĩa là<input value={selected.optimizationEventLabel} onChange={(event) => patchScope({ optimizationEventLabel: event.target.value })} /></label>
+          <label>Số result mục tiêu cả kỳ
+            <input
+              type="number"
+              min="0"
+              value={selected.planTargetResults ?? ""}
+              placeholder="vd 402"
+              onChange={(event) => patchScope({ planTargetResults: event.target.value ? Number(event.target.value) : null })}
+            />
+            <small className="fieldHint">Để trống nếu chỉ theo dõi chi phí, không theo dõi sản lượng.</small>
+          </label>
+          <label>% Estimate Rate
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={selected.estimateRate === null ? "" : Math.round(selected.estimateRate * 100)}
+              placeholder="vd 75"
+              onChange={(event) => patchScope({ estimateRate: event.target.value ? Number(event.target.value) / 100 : null })}
+            />
+            <small className="fieldHint">Tỉ lệ result nền tảng báo về còn lại sau khi lọc. Để trống nếu Plan Target đã tính trên result thô.</small>
+          </label>
+          <label>Cách trộn window
+            <select
+              value={selected.windowBlendMethod}
+              onChange={(event) => patchScope({ windowBlendMethod: event.target.value as OptimizationScope["windowBlendMethod"] })}
+            >
+              <option value="ARITHMETIC">Trung bình cộng (khớp Google Sheet)</option>
+              <option value="GEOMETRIC">Trung bình nhân (chặt hơn)</option>
+            </select>
+          </label>
+          <label>Điểm nhóm lấy từ
+            <select
+              value={selected.contextSource}
+              onChange={(event) => patchScope({ contextSource: event.target.value as OptimizationScope["contextSource"] })}
+            >
+              <option value="PARENT">Cấp cha trực tiếp</option>
+              <option value="PROJECT">Tổng toàn tài khoản</option>
+            </select>
+            <small className="fieldHint">
+              Chọn tổng tài khoản sẽ kéo ngưỡng tắt của mọi entity theo sức khỏe chung của tài khoản.
+            </small>
+          </label>
           <label>Achievement cap %
             <input type="number" min="100" value={selected.achievementCap * 100} onChange={(event) => patchScope({ achievementCap: Number(event.target.value) / 100 })} />
           </label>
@@ -271,6 +313,48 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
             </select>
           </label>
           <label>Manual benchmark (để trống = auto)<input type="number" min="0" value={selected.cohortBenchmark.manualValue ?? ""} onChange={(event) => patchScope({ cohortBenchmark: { ...selected.cohortBenchmark, manualValue: event.target.value ? Number(event.target.value) : null } })} /></label>
+          <label className="checkboxLine">
+            <input
+              type="checkbox"
+              checked={selected.cohortBenchmark.excludeSelf}
+              onChange={(event) => patchScope({ cohortBenchmark: { ...selected.cohortBenchmark, excludeSelf: event.target.checked } })}
+            /> Loại chính entity khỏi benchmark của nó
+          </label>
+        </div>
+        <div className="subsectionDivider">
+          <div className="subsectionTitle">
+            <div>
+              <strong>Cho phép mặt bằng hoãn quyết định tắt</strong>
+              <span>
+                Khi bật, entity dưới plan nhưng vượt hẳn mặt bằng sẽ chuyển sang Review thay vì bị tắt.
+                Mặc định tắt: áp dụng không giới hạn thì hầu như mọi quyết định đều bị hoãn.
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="formGrid">
+          <label className="checkboxLine">
+            <input
+              type="checkbox"
+              checked={selected.cohortGuard.enabled}
+              onChange={(event) => patchScope({ cohortGuard: { ...selected.cohortGuard, enabled: event.target.checked } })}
+            /> Bật
+          </label>
+          <label>Sàn plan %
+            <input
+              type="number" min="0" max="100" disabled={!selected.cohortGuard.enabled}
+              value={Math.round(selected.cohortGuard.minPlanAchievement * 100)}
+              onChange={(event) => patchScope({ cohortGuard: { ...selected.cohortGuard, minPlanAchievement: Number(event.target.value) / 100 } })}
+            />
+            <small className="fieldHint">Dưới mức này thì không gì cứu được.</small>
+          </label>
+          <label>Vượt mặt bằng tối thiểu %
+            <input
+              type="number" min="100" disabled={!selected.cohortGuard.enabled}
+              value={Math.round(selected.cohortGuard.minCohortAchievement * 100)}
+              onChange={(event) => patchScope({ cohortGuard: { ...selected.cohortGuard, minCohortAchievement: Number(event.target.value) / 100 } })}
+            />
+          </label>
         </div>
       </section>
 

@@ -132,6 +132,15 @@ export function ProjectSetupView({
           <label>Timezone<input value={project.config.timezone} onChange={(event) => patchConfig({ timezone: event.target.value })} /></label>
           <label>Currency<input maxLength={3} value={project.config.currency} onChange={(event) => patchConfig({ currency: event.target.value.toUpperCase() })} /></label>
           <label>Start date<input type="date" value={project.config.startDate} onChange={(event) => patchConfig({ startDate: event.target.value })} /></label>
+          <label>Ngày kết thúc kế hoạch
+            <input
+              type="date"
+              value={project.config.planEndDate ?? ""}
+              min={project.config.startDate}
+              onChange={(event) => patchConfig({ planEndDate: event.target.value || null })}
+            />
+            <small className="fieldHint">Cần có để tính tiến độ và ngân sách còn phải đẩy.</small>
+          </label>
         </div>
       </section>
 

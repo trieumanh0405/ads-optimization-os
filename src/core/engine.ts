@@ -6,6 +6,7 @@ import { filterUsableFacts, runDataQualityChecks } from "./qc";
 import { applyCrossEntityGuardrails, evaluateEntity } from "./rules";
 import type { Recommendation } from "./rules";
 import { createActionRecords } from "./actions";
+import { buildScopeSummary, type ScopeSummary } from "./pacing";
 import { classifyFacts, factsForScope, projectConfigForScope, resolvedScopes } from "./scopes";
 
 export function runOptimizationEngine(rawRequest: unknown) {
@@ -14,12 +15,13 @@ export function runOptimizationEngine(rawRequest: unknown) {
   const runId = randomUUID();
   if (qc.status === "FAIL") return {
     runId, runAt: request.runAt, asOfDate: request.asOfDate, status: "BLOCKED" as const,
-    qc, evidence: [], recommendations: [], actions: [],
+    qc, evidence: [], recommendations: [], actions: [], summaries: [] as ScopeSummary[],
     classificationSummary: { pfmIncluded: 0, nonPfmExcluded: 0, reviewUnclassified: 0 }
   };
   const usableFacts = classifyFacts(filterUsableFacts(request.facts, request.asOfDate), request.config);
   const allEvidence: EntityEvidence[] = [];
   const allRecommendations: Recommendation[] = [];
+  const summaries: ScopeSummary[] = [];
   for (const scope of resolvedScopes(request.config)) {
     const metric = request.metricDefinitions.find((item) => item.key === scope.primaryMetricKey);
     if (!metric) continue;
@@ -37,6 +39,15 @@ export function runOptimizationEngine(rawRequest: unknown) {
       evidence.map((entity) => evaluateEntity(entity, evidence, request.rules, scopedConfig, metric, scope)),
       scopedConfig
     );
+    summaries.push(buildScopeSummary({
+      facts: scopedFacts,
+      config: scopedConfig,
+      scope,
+      definition: metric,
+      asOfDate: request.asOfDate,
+      runAt: request.runAt,
+      entityCount: evidence.length
+    }));
     allEvidence.push(...evidence);
     allRecommendations.push(...recommendations);
   }
@@ -53,6 +64,6 @@ export function runOptimizationEngine(rawRequest: unknown) {
   };
   return {
     runId, runAt: request.runAt, asOfDate: request.asOfDate, status: "COMPLETED" as const,
-    qc, evidence, recommendations, actions, classificationSummary
+    qc, evidence, recommendations, actions, summaries, classificationSummary
   };
 }

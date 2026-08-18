@@ -5,6 +5,7 @@ import type {
   ProjectConfig
 } from "@/core/schemas";
 import type { ActionEvent, ActionRecord } from "@/core/actions";
+import type { ScopeSummary } from "@/core/pacing";
 import type { DimensionMapping, SourceMapping, SupportingMetricMapping } from "@/core/normalize";
 import type { AiInsight } from "@/ai/contracts";
 
@@ -32,6 +33,8 @@ export type OptimizationRun = {
   evidence: Array<Record<string, unknown>>;
   recommendations: Array<Record<string, unknown>>;
   actions: ActionRecord[];
+  /** Plan tracking per optimization scope; absent on runs made before v1.4. */
+  summaries?: ScopeSummary[];
   classificationSummary?: {
     pfmIncluded: number;
     nonPfmExcluded: number;

@@ -10,7 +10,7 @@ describe("backtest", () => {
     accountId: "acc_1",
     timezone: "UTC",
     currency: "USD",
-    startDate: "2026-01-01",
+    startDate: "2026-01-01", planEndDate: null,
     primaryMetricKey: "CPL",
     optimizationEventLabel: "Lead",
     target: 50,
@@ -30,7 +30,7 @@ describe("backtest", () => {
         enabled: true,
         primaryMetricKey: "CPL",
         optimizationEventLabel: "Lead",
-        planTarget: 50,
+        planTarget: 50, planTargetResults: null, estimateRate: null,
         ruleSetId: "rs_1",
         ruleVersion: 1,
         windows: [
