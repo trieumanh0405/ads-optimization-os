@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { engineRequestSchema, type EngineRequest } from "./schemas";
-import { attachCohortEvidence, buildEntityEvidence, computeCohortBenchmark } from "./windows";
+import { attachCohortEvidence, attachContextEvidence, buildCohortModel, buildEntityEvidence } from "./windows";
 import type { EntityEvidence } from "./windows";
 import { filterUsableFacts, runDataQualityChecks } from "./qc";
 import { applyCrossEntityGuardrails, evaluateEntity } from "./rules";
@@ -27,8 +27,12 @@ export function runOptimizationEngine(rawRequest: unknown) {
     if (!scopedFacts.length) continue;
     const scopedConfig = projectConfigForScope(request.config, scope);
     const planEvidence = buildEntityEvidence(scopedFacts, scopedConfig, metric, request.asOfDate, scope);
-    const cohortBenchmark = computeCohortBenchmark(scopedFacts, scopedConfig, scope, metric, request.asOfDate);
-    const evidence = attachCohortEvidence(planEvidence, cohortBenchmark, scope, metric);
+    const cohort = buildCohortModel(scopedFacts, scope, metric, request.asOfDate);
+    const evidence = attachContextEvidence(
+      attachCohortEvidence(planEvidence, cohort, scope, metric),
+      scopedConfig,
+      scope
+    );
     const recommendations = applyCrossEntityGuardrails(
       evidence.map((entity) => evaluateEntity(entity, evidence, request.rules, scopedConfig, metric, scope)),
       scopedConfig

@@ -36,6 +36,10 @@ Achievement always uses “higher is better” orientation:
 - Lower-is-better: `achievement = target / actual`
 - Higher-is-better: `achievement = actual / target`
 
+A cost-per-result of exactly zero is treated as missing evidence, not as a
+perfect score. It only occurs when a period recorded results with no recorded
+spend, which is a sync artefact rather than a real outcome.
+
 ## Evidence windows
 
 - `TODAY`: `[asOfDate, asOfDate + 1 day)`
@@ -45,25 +49,50 @@ Achievement always uses “higher is better” orientation:
 
 Today is excluded from SHORT and LONG. A weighted score renormalizes available optional windows, but missing required windows returns `null`.
 
-`windowScore = Π(MIN(achievement, cap)^(weight/totalWeight))` which is computed as `exp(Σ((weight/totalWeight) × ln(MIN(achievement, cap))))`
+Each scope picks one of two blends through `windowBlendMethod`:
 
-Note that:
-- Zero achievement with evidence collapses score to 0
+- `ARITHMETIC` (default): `windowScore = Σ(MIN(achievement, cap) × weight) / Σweight`.
+  This reproduces the team's reference spreadsheet, so engine output can be
+  checked against it row by row.
+- `GEOMETRIC`: `windowScore = Π(MIN(achievement, cap)^(weight/totalWeight))`,
+  computed as `exp(Σ((weight/totalWeight) × ln(MIN(achievement, cap))))`. Stricter,
+  because a weak window drags the product down and a single zero collapses the
+  score outright.
+
+Both blends share the same rules:
 - Missing windows are excluded and remaining weights normalized
+- A missing required window returns `null`
 - Values are capped (default cap=2) so one exceptional window cannot hide a weak one
-- This is the weighted geometric mean, NOT arithmetic average
+
+A window only raises a red flag when it carries evidence of its own. Today is a
+partial day, so it ships without a red-flag floor: before the day is over almost
+every entity would trip one.
 
 ## Entity and context score
 
-The second weighting layer implements the transcript’s “entity vs total” concept:
+The second weighting layer implements the “entity vs total” concept:
 
-`decisionScore = entityWindowScore × entityWeight + contextWindowScore × contextWeight`
+`blendedAchievement = entityWindowScore × entityWeight + contextWindowScore × contextWeight`
 
-- Campaign context: project overall
-- Ad set context: parent Campaign, falling back to project
-- Ad context: parent Ad set, then Campaign, then project
+Weights come from `config.contextWeights` per entity level and default to
+60% entity / 40% context, matching the reference spreadsheet's "Ads / Total"
+split. With a context weight of 0 the blend returns the entity score unchanged.
 
-Both weights must sum to 1 for every entity level.
+`scope.contextSource` selects what the context is:
+
+- `PARENT` (default): Ad set for an Ad, Campaign for an Ad set, project overall
+  for a Campaign or when no parent exists.
+- `PROJECT`: the project total for every level, which is the literal reading of
+  the spreadsheet's "Total" column.
+
+`PROJECT` moves the effective pass mark of every entity with overall account
+health. When the account sits at 74% of plan, an entity needs 84% rather than
+80% to clear the Off band. That coupling is deliberate in the spreadsheet but it
+makes the configured bands mean something different from what they say, so it is
+not the default.
+
+Rules matching `ACHIEVEMENT` on `GEOMETRIC` / `PLAN_GEOMETRIC` evaluate the
+blended score. `ENTITY_GEOMETRIC` evaluates the unblended entity score.
 
 ## Rule evaluation
 
@@ -76,6 +105,21 @@ Rules independently select a score source (`TODAY`, `SHORT`, `LONG`, `LIFETIME`,
 5. Choose the highest numeric priority.
 6. If top-priority rules produce different actions, return `REVIEW_MANUALLY`.
 7. Apply budget ownership and scale guardrails.
+
+## Peer comparison
+
+Each scope can benchmark an entity against its peers over a lookback window.
+The benchmark uses the median of per-entity metric values by default and
+excludes the entity being judged, so a dominant spender is not measured mostly
+against itself. Every recommendation carries the entity's rank within the peer
+group, which separates entities that a capped ratio cannot.
+
+The comparison is reporting by default. `cohortGuard` optionally lets a strong
+peer result defer a turn-off or budget cut to manual review, and is disabled
+unless a team switches it on with an explicit plan floor and peer margin.
+Applied unconditionally at exactly 100%, this veto suppressed nearly every
+decision in accounts performing below plan, which is when decisiveness matters
+most.
 
 ## Budget ownership
 

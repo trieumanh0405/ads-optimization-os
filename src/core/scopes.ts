@@ -1,3 +1,4 @@
+import { CURRENT_METHODOLOGY_VERSION } from "./schemas";
 import type {
   ClassificationRule,
   FactRow,
@@ -26,6 +27,28 @@ export function resolvedWindows(windows: WindowConfig[]): WindowConfig[] {
   return windows.map(inferredWindow);
 }
 
+/**
+ * Upgrade a stored scope to the current scoring methodology.
+ *
+ * Version 1 scopes benchmarked every entity against the aggregate of the whole
+ * account, including the entity itself, which inflated the benchmark and made
+ * the cohort comparison unreadable. They also flagged a partial Today window as
+ * a red flag, which fires on almost every entity before the day is over.
+ */
+export function upgradeScope(scope: OptimizationScope): OptimizationScope {
+  if (scope.methodologyVersion >= CURRENT_METHODOLOGY_VERSION) return scope;
+  return {
+    ...scope,
+    methodologyVersion: CURRENT_METHODOLOGY_VERSION,
+    cohortBenchmark: { ...scope.cohortBenchmark, method: "MEDIAN", excludeSelf: true },
+    windows: scope.windows.map((window) => (
+      (window.kind ?? window.id.toUpperCase()) === "TODAY"
+        ? { ...window, redFlagThreshold: null }
+        : window
+    ))
+  };
+}
+
 export function legacyScope(config: ProjectConfig): OptimizationScope {
   return {
     scopeId: "default-pfm",
@@ -40,14 +63,19 @@ export function legacyScope(config: ProjectConfig): OptimizationScope {
     achievementCap: 2,
     scaleMinWindowAchievement: 1,
     contextScaleMinAchievement: 1,
+    windowBlendMethod: "ARITHMETIC",
+    contextSource: "PROJECT",
     cohortBenchmark: {
       enabled: true,
       lookbackDays: 14,
       minEntities: 3,
       minResults: 5,
-      method: "AGGREGATE",
+      method: "MEDIAN",
+      excludeSelf: true,
       manualValue: null
     },
+    cohortGuard: { enabled: false, minPlanAchievement: 0.7, minCohortAchievement: 1.2 },
+    methodologyVersion: CURRENT_METHODOLOGY_VERSION,
     // Existing projects keep operating until an admin creates classification
     // rules. Once rules exist, unmatched rows are sent to review.
     fallbackClassification: config.classificationRules.length ? "REVIEW_UNCLASSIFIED" : "PFM_INCLUDED"
@@ -56,10 +84,10 @@ export function legacyScope(config: ProjectConfig): OptimizationScope {
 
 export function resolvedScopes(config: ProjectConfig): OptimizationScope[] {
   const scopes = config.optimizationScopes.length ? config.optimizationScopes : [legacyScope(config)];
-  return scopes.filter((scope) => scope.enabled).map((scope) => ({
-    ...scope,
-    windows: resolvedWindows(scope.windows)
-  }));
+  return scopes.filter((scope) => scope.enabled).map((scope) => {
+    const upgraded = upgradeScope(scope);
+    return { ...upgraded, windows: resolvedWindows(upgraded.windows) };
+  });
 }
 
 export function projectConfigForScope(config: ProjectConfig, scope: OptimizationScope): ProjectConfig {

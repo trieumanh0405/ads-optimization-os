@@ -135,9 +135,8 @@ describe("achievement", () => {
     expect(achievement(10, 20, "LOWER_IS_BETTER")).toBe(2);
   });
 
-  it("returns capped value for value=0 in LOWER_IS_BETTER", () => {
-    expect(achievement(0, 20, "LOWER_IS_BETTER")).toBe(10);
-    expect(achievement(0, 20, "LOWER_IS_BETTER", 15)).toBe(15);
+  it("treats a zero cost-per-result as missing evidence, not a perfect score", () => {
+    expect(achievement(0, 20, "LOWER_IS_BETTER")).toBeNull();
   });
 
   it("returns null when value is null", () => {

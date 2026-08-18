@@ -86,8 +86,25 @@ export const cohortBenchmarkSchema = z.object({
   lookbackDays: z.number().int().positive().default(14),
   minEntities: z.number().int().positive().default(3),
   minResults: z.number().nonnegative().default(5),
-  method: z.enum(["AGGREGATE", "MEDIAN"]).default("AGGREGATE"),
+  method: z.enum(["AGGREGATE", "MEDIAN"]).default("MEDIAN"),
+  // An entity must not be part of the benchmark it is judged against, otherwise
+  // a large spender is compared mostly to itself.
+  excludeSelf: z.boolean().default(true),
   manualValue: z.number().positive().nullable().default(null)
+});
+
+/**
+ * Optional protection against turning off an entity that misses an unrealistic
+ * plan target while still being one of the better performers in the account.
+ *
+ * Disabled by default. When it was unconditional it vetoed almost every
+ * decision in accounts whose overall performance sits below plan, which is
+ * exactly when decisive action matters most.
+ */
+export const cohortGuardSchema = z.object({
+  enabled: z.boolean().default(false),
+  minPlanAchievement: z.number().min(0).default(0.7),
+  minCohortAchievement: z.number().min(0).default(1.2)
 });
 
 export const optimizationScopeSchema = z.object({
@@ -103,10 +120,25 @@ export const optimizationScopeSchema = z.object({
   achievementCap: z.number().positive().default(2),
   scaleMinWindowAchievement: z.number().positive().default(1),
   contextScaleMinAchievement: z.number().positive().default(1),
+  // How the configured time windows are combined into one entity score.
+  // ARITHMETIC reproduces the team's reference spreadsheet (60% x 3 Days +
+  // 40% x Today). GEOMETRIC is stricter: a weak window cannot be hidden by a
+  // strong one.
+  windowBlendMethod: z.enum(["ARITHMETIC", "GEOMETRIC"]).default("ARITHMETIC"),
+  // Which aggregate the entity score is blended against in the second layer.
+  // PROJECT matches the spreadsheet's "Total" column; PARENT compares an ad to
+  // its own ad set, which reacts to the structure the buyer actually controls.
+  contextSource: z.enum(["PROJECT", "PARENT"]).default("PROJECT"),
   cohortBenchmark: cohortBenchmarkSchema.default({
     enabled: true, lookbackDays: 14, minEntities: 3, minResults: 5,
-    method: "AGGREGATE", manualValue: null
+    method: "MEDIAN", excludeSelf: true, manualValue: null
   }),
+  cohortGuard: cohortGuardSchema.default({
+    enabled: false, minPlanAchievement: 0.7, minCohortAchievement: 1.2
+  }),
+  // Bumped when the scoring defaults change so stored projects are upgraded
+  // on read instead of silently keeping superseded behaviour.
+  methodologyVersion: z.number().int().positive().default(1),
   fallbackClassification: z.enum(["PFM_INCLUDED", "REVIEW_UNCLASSIFIED"]).default("REVIEW_UNCLASSIFIED")
 });
 
@@ -194,6 +226,8 @@ export const engineRequestSchema = z.object({
     recommendedAction: actionCodeSchema
   })).default([])
 });
+
+export const CURRENT_METHODOLOGY_VERSION = 2;
 
 export type FactRow = z.infer<typeof factRowSchema>;
 export type MetricDefinition = z.infer<typeof metricDefinitionSchema>;

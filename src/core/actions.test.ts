@@ -8,7 +8,7 @@ const recommendation: Recommendation = {
   currentStatus: "ACTIVE", budgetType: "NONE", recommendedAction: "TURN_OFF", adjustmentPct: null,
   reasonCodes: ["RULE_AD_OFF"], matchedRuleIds: ["AD_OFF"], evidenceWindow: "TODAY + SHORT",
   currentMetric: 200, targetMetric: 100, evaluatedValue: 0.5,
-  weightedAchievement: 0.5, contextWeightedAchievement: 0.6,
+  blendedAchievement: 1, cohortRank: null, cohortSize: null, weightedAchievement: 0.5, contextWeightedAchievement: 0.6,
   cohortWeightedAchievement: 0.7, cohortBenchmark: 120,
   minimumWindowAchievement: 0.4, trendRatio: 0.8, redFlagWindowIds: [],
   confidence: 0.8, executionPhase: 1, windowMetrics: []

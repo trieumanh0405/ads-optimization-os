@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleDollarSign,
+  Hourglass,
   Play,
   RefreshCw,
   ShieldAlert,
@@ -36,9 +37,12 @@ export type RecommendationView = {
   currentMetric: number | null;
   targetMetric: number;
   weightedAchievement: number | null;
+  blendedAchievement?: number | null;
   contextWeightedAchievement: number | null;
   cohortWeightedAchievement: number | null;
   cohortBenchmark: number | null;
+  cohortRank?: number | null;
+  cohortSize?: number | null;
   minimumWindowAchievement: number | null;
   trendRatio: number | null;
   redFlagWindowIds: string[];
@@ -180,13 +184,16 @@ export function DecisionBoard({
     }
   }
 
+  // "Not enough data yet" and "the engine refused to decide" are different
+  // problems and need different follow-up, so they are counted separately.
   const counts = {
     TURN_OFF: recommendations.filter((item) => item.recommendedAction === "TURN_OFF").length,
-    INCREASE_BUDGET: recommendations.filter((item) => item.recommendedAction === "INCREASE_BUDGET").length,
+    BUDGET: recommendations.filter(
+      (item) => item.recommendedAction === "INCREASE_BUDGET" || item.recommendedAction === "DECREASE_BUDGET"
+    ).length,
     KEEP: recommendations.filter((item) => item.recommendedAction === "KEEP").length,
-    REVIEW: recommendations.filter(
-      (item) => item.recommendedAction === "REVIEW_MANUALLY" || item.recommendedAction === "PENDING_DATA"
-    ).length
+    REVIEW: recommendations.filter((item) => item.recommendedAction === "REVIEW_MANUALLY").length,
+    PENDING_DATA: recommendations.filter((item) => item.recommendedAction === "PENDING_DATA").length
   };
 
   return (
@@ -241,8 +248,8 @@ export function DecisionBoard({
             <CircleDollarSign size={18} />
           </span>
           <div>
-            <small>Invest thêm</small>
-            <strong>{counts.INCREASE_BUDGET}</strong>
+            <small>Đổi ngân sách</small>
+            <strong>{counts.BUDGET}</strong>
             <em>budget owners</em>
           </div>
         </article>
@@ -261,9 +268,19 @@ export function DecisionBoard({
             <AlertTriangle size={18} />
           </span>
           <div>
-            <small>Cần review/data</small>
+            <small>Cần review tay</small>
             <strong>{counts.REVIEW}</strong>
-            <em>không auto-decide</em>
+            <em>engine không tự quyết</em>
+          </div>
+        </article>
+        <article>
+          <span className="metricIcon teal">
+            <Hourglass size={18} />
+          </span>
+          <div>
+            <small>Chưa đủ dữ liệu</small>
+            <strong>{counts.PENDING_DATA}</strong>
+            <em>chờ thêm bằng chứng</em>
           </div>
         </article>
       </section>
@@ -379,14 +396,17 @@ export function DecisionBoard({
                     <td className="mono">
                       {item.weightedAchievement === null ? "N/A" : `${Math.round(item.weightedAchievement * 100)}%`}
                       <small>
-                        Cohort{" "}
-                        {item.cohortWeightedAchievement === null
-                          ? "N/A"
-                          : `${Math.round(item.cohortWeightedAchievement * 100)}%`}{" "}
-                        · Context{" "}
+                        {item.blendedAchievement !== null && item.blendedAchievement !== undefined
+                          && item.blendedAchievement !== item.weightedAchievement
+                          ? `Gộp ${Math.round(item.blendedAchievement * 100)}% · `
+                          : ""}
+                        Nhóm{" "}
                         {item.contextWeightedAchievement === null
                           ? "N/A"
                           : `${Math.round(item.contextWeightedAchievement * 100)}%`}
+                        {item.cohortRank && item.cohortSize
+                          ? ` · Hạng ${item.cohortRank}/${item.cohortSize}`
+                          : ""}
                       </small>
                     </td>
                     <td>
@@ -476,7 +496,7 @@ export function DecisionBoard({
                 <dd>{formatNumber(selected.targetMetric)}</dd>
               </div>
               <div>
-                <dt>Plan geometric</dt>
+                <dt>Điểm entity so với plan</dt>
                 <dd>
                   {selected.weightedAchievement === null
                     ? "N/A"
@@ -484,23 +504,39 @@ export function DecisionBoard({
                 </dd>
               </div>
               <div>
-                <dt>Cohort geometric</dt>
+                <dt>Điểm gộp (entity + nhóm)</dt>
                 <dd>
-                  {selected.cohortWeightedAchievement === null
+                  {selected.blendedAchievement === null || selected.blendedAchievement === undefined
                     ? "N/A"
-                    : `${Math.round(selected.cohortWeightedAchievement * 100)}%`}
+                    : `${Math.round(selected.blendedAchievement * 100)}%`}
                 </dd>
               </div>
               <div>
-                <dt>Cohort benchmark</dt>
-                <dd>{formatNumber(selected.cohortBenchmark)}</dd>
-              </div>
-              <div>
-                <dt>Project / parent context</dt>
+                <dt>Điểm nhóm cấp trên</dt>
                 <dd>
                   {selected.contextWeightedAchievement === null
                     ? "N/A"
                     : `${Math.round(selected.contextWeightedAchievement * 100)}%`}
+                </dd>
+              </div>
+              <div>
+                <dt>Hạng trong tài khoản</dt>
+                <dd>
+                  {selected.cohortRank && selected.cohortSize
+                    ? `${selected.cohortRank}/${selected.cohortSize}`
+                    : "N/A"}
+                </dd>
+              </div>
+              <div>
+                <dt>Mặt bằng nhóm ngang hàng</dt>
+                <dd>{formatNumber(selected.cohortBenchmark)}</dd>
+              </div>
+              <div>
+                <dt>So với mặt bằng</dt>
+                <dd>
+                  {selected.cohortWeightedAchievement === null
+                    ? "N/A"
+                    : `${Math.round(selected.cohortWeightedAchievement * 100)}%`}
                 </dd>
               </div>
               <div>

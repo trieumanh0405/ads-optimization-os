@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [1.3.0] — 2026-08-18 — Decision methodology corrections
+
+Recommendations now reach a conclusion for entities that previously piled up in
+manual review, and the configured weights and bands mean what they say.
+
+### Fixed
+
+- **Peer comparison no longer vetoes decisions.** A below-plan entity that beat
+  the account average was forced to `REVIEW_MANUALLY` regardless of how far
+  below plan it sat. Because the benchmark was the account's own aggregate, any
+  account performing below plan sent almost every entity to manual review. On a
+  20-ad simulation this alone stranded 35% of ads; the equivalent production run
+  left 987 of 998 entities undecided. The comparison is now reporting only, with
+  an opt-in `cohortGuard` that requires a plan floor and a clear peer margin.
+- **The 80-100% band keeps an ad instead of turning it off.** The `watch` rule
+  turned off ads inside the band the reference spreadsheet marks Keep/Active, so
+  an ad at 96% of target was proposed for shutdown.
+- **`contextWeights` now drives decisions.** The entity/context split was
+  configurable in Project setup and stored, but no engine code ever read it. The
+  documented second weighting layer was not implemented.
+- **A zero cost-per-result is treated as missing evidence.** It previously
+  scored 1000% achievement, letting one sync artefact rescue a weak entity.
+- **Confidence separates thin evidence from thick.** It was scaled by the rule's
+  own minimum, which is one result by default, so nearly every row read 100%.
+- **A partial Today window no longer raises a red flag,** and a red flag no
+  longer downgrades a healthy KEEP to manual review. It still blocks scaling.
+- **Rule descriptions match their thresholds** (they described 70/95/120 bands
+  while the code used 80/100/120).
+
+### Added
+
+- `windowBlendMethod` per scope: `ARITHMETIC` (default, matches the reference
+  spreadsheet) or `GEOMETRIC` (stricter).
+- `contextSource` per scope: `PARENT` (default) or `PROJECT`.
+- Peer benchmark uses the median and excludes the entity being judged;
+  recommendations carry `cohortRank` and `cohortSize`.
+- Stored projects are upgraded on read through `methodologyVersion`.
+- Decision board counts "chưa đủ dữ liệu" separately from "cần review tay".
+- 21 regression tests covering every behaviour above.
+
+---
+
 ## [1.2.0] — 2026-08-06 — Phase 2: Modular Refactor + Security + Performance
 
 ### 🗂️ Backend Modularization

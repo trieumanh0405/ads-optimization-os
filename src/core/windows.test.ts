@@ -85,7 +85,10 @@ describe("buildEntityEvidence", () => {
       optimizationEventLabel: "Lead", planTarget: 50, ruleSetId: "rs1", ruleVersion: 1,
       windows: [{ id: "D7", days: 7, weight: 1.0, required: false, includeInScore: true, role: "CONFIRMATION", minSpend: 0, minResults: 0, redFlagThreshold: null }],
       achievementCap: 2, scaleMinWindowAchievement: 1, contextScaleMinAchievement: 1,
-      cohortBenchmark: { enabled: true, lookbackDays: 14, minEntities: 3, minResults: 5, method: "AGGREGATE", manualValue: null },
+      windowBlendMethod: "ARITHMETIC", contextSource: "PROJECT",
+        cohortGuard: { enabled: false, minPlanAchievement: 0.7, minCohortAchievement: 1.2 },
+        methodologyVersion: 2,
+        cohortBenchmark: { enabled: true, lookbackDays: 14, minEntities: 3, minResults: 5, method: "AGGREGATE", excludeSelf: true, manualValue: null },
       fallbackClassification: "PFM_INCLUDED"
     };
 
