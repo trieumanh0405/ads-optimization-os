@@ -257,7 +257,15 @@ export function ProjectSetupView({
 
       <section className="sectionCard">
         <div className="sectionHeader">
-          <div><span className="sectionKicker">GUARDRAILS</span><h2>Context và scale limits</h2><p>Context được kiểm tra riêng, không nhân vào Entity Score. Campaign CBO và Ad set ABO mới được tăng/giảm budget.</p></div>
+          <div>
+            <span className="sectionKicker">GUARDRAILS</span>
+            <h2>Trọng số Entity / Context và giới hạn scale</h2>
+            <p>
+              Điểm dùng để quyết định = điểm riêng entity nhân Entity %, cộng điểm nhóm nhân Context %.
+              Để Context 0% nếu chỉ muốn chấm theo bản thân entity. Chọn nhóm nào là ở ô
+              “Điểm nhóm lấy từ” trong phần scope. Campaign CBO và Ad set ABO mới được tăng giảm budget.
+            </p>
+          </div>
         </div>
         <div className="formGrid">
           {(["CAMPAIGN", "ADSET", "AD"] as const).map((level) => (
