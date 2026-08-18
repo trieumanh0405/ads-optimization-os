@@ -80,70 +80,165 @@ h1,h2,h3,p{margin-top:0}h1{margin-bottom:4px;font-size:clamp(24px,3vw,30px);lett
 @media(max-width:1180px){.classificationRow{grid-template-columns:repeat(3,minmax(0,1fr))}.classificationRow .iconAction{align-self:end}}
 @media(max-width:560px){.classificationRow{grid-template-columns:1fr}.classificationRow input,.classificationRow select{font-size:16px}.scopeTabs button{min-width:135px}}
 
-/* ── Điều hành: plan overview, bands, merged decision table ───────────────── */
-.planOverview .sectionHeader .rotated{transform:rotate(-90deg);transition:transform var(--motion)}
-.planGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;padding:0 18px 16px}
-.planBlock{display:flex;margin:0;flex-direction:column;gap:2px;border:1px solid var(--border);border-radius:10px;padding:12px 13px;background:var(--surface-soft)}
-.planBlockTitle{margin-bottom:6px;color:var(--muted);font:700 9.5px "Fira Code";letter-spacing:.09em;text-transform:uppercase}
-.planFigure{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:6px;padding:4px 0;border-bottom:1px dashed var(--border-soft)}
-.planFigure:last-child{border-bottom:0}
-.planFigure dt{color:#4f5e75;font-size:11px}
-.planFigure dd{margin:0;color:var(--ink);font:600 12.5px "Fira Code";font-variant-numeric:tabular-nums;text-align:right}
-.planFigure small{grid-column:1/-1;color:var(--subtle);font-size:10px}
-.planFigure.band-off dd{color:var(--danger)}.planFigure.band-watch dd{color:var(--warning)}
-.planFigure.band-keep dd{color:var(--success)}.planFigure.band-scale dd{color:var(--primary)}
-.weightRow{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0}
-.weightRow>span{color:#4f5e75;font-size:11px}
-.weightRow>div{display:flex;flex-wrap:wrap;gap:5px}
-.weightRow b.muted{color:var(--subtle);background:#f4f6fa}
-.weightRow b{border-radius:999px;padding:3px 8px;background:#fff;border:1px solid var(--border);font:600 10px "Fira Code"}
-.bandTable{width:100%;margin-top:8px;border-collapse:collapse}
-.bandTable td{padding:4px 5px;border-top:1px solid var(--border-soft);font-size:10.5px}
-.bandTable tr.current{background:#fff;box-shadow:inset 2px 0 0 var(--primary)}
+/* ═══ Điều hành ═══════════════════════════════════════════════════════════
+   A cockpit, not a report. One focal point per band of the screen: what is
+   running, what the plan says, what to act on, then the rows themselves.
+   Colour carries decision meaning only, never decoration.                  */
+
+:root{
+  --band-off:#b4232d;--band-off-bg:#fdeef0;--band-off-line:#e8a6ac;
+  --band-watch:#9a5c05;--band-watch-bg:#fff5e3;--band-watch-line:#e0bd7c;
+  --band-keep:#0a7350;--band-keep-bg:#e8f6f0;--band-keep-line:#96cfb7;
+  --band-scale:#1e40af;--band-scale-bg:#ebf1ff;--band-scale-line:#a9bef0;
+  --band-idle:#6b7688;--band-idle-bg:#f1f3f7;--band-idle-line:#cfd5df
+}
+.opsView{gap:14px}
+
+/* Command bar: state of the run, and the one button that matters. */
+.commandBar{display:flex;align-items:center;gap:14px;border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;background:var(--surface)}
+.commandMeta{display:flex;min-width:0;flex:1;flex-direction:column;gap:2px}
+.commandMeta strong{font-size:13.5px;letter-spacing:-.01em}
+.commandMeta span{color:var(--muted);font-size:11px}
+.commandDate{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:11px;white-space:nowrap}
+.commandDate input{min-height:36px;border:1px solid var(--border);border-radius:7px;padding:0 9px;background:var(--surface);color:var(--ink);font-size:12px}
+
+/* Plan panel: a single always-readable pulse row, detail on demand. */
+.planPanel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);overflow:hidden}
+.planPulseRow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0}
+.planIdentity{display:flex;min-width:170px;flex-direction:column;justify-content:center;gap:3px;padding:14px 18px;border-right:1px solid var(--border-soft);background:var(--surface-soft)}
+.planScopeName{font:600 14px "Fira Sans";letter-spacing:-.015em}
+.planIdentity small{color:var(--muted);font-size:10.5px}
+.pulse{display:flex;min-width:132px;flex:1;flex-direction:column;justify-content:center;gap:3px;padding:14px 18px;border-right:1px solid var(--border-soft)}
+.pulse.wide{min-width:180px}
+.pulse:last-of-type{border-right:0}
+.pulseLabel{color:var(--muted);font-size:10.5px;letter-spacing:.01em}
+.pulseValue{font:700 19px "Fira Code";font-variant-numeric:tabular-nums;letter-spacing:-.035em;line-height:1.15}
+.pulseSub{color:var(--subtle);font-size:10px}
+.pulse.band-off .pulseValue{color:var(--band-off)}
+.pulse.band-watch .pulseValue{color:var(--band-watch)}
+.pulse.band-keep .pulseValue{color:var(--band-keep)}
+.pulse.band-scale .pulseValue{color:var(--band-scale)}
+.planToggle{display:flex;align-items:center;gap:5px;padding:0 16px;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--primary);font:600 11.5px "Fira Sans"}
+.planToggle:hover{background:var(--primary-soft)}
+.planToggle .flipped{transform:rotate(180deg)}
+.planToggle svg{transition:transform var(--motion)}
+
+.planAlerts{display:flex;flex-direction:column;gap:1px;background:var(--border-soft)}
+.planAlerts p{display:flex;margin:0;align-items:flex-start;gap:9px;padding:10px 18px;background:var(--warning-bg);color:#7a4a04;font-size:11.5px;line-height:1.5}
+.planAlerts p.alertSevere{background:var(--danger-bg);color:#7c1d26}
+.planAlerts svg{flex:0 0 auto;margin-top:2px}
+
+.planDetail{border-top:1px solid var(--border);padding:16px 18px;background:var(--surface-soft)}
+.planDetailGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;margin-bottom:14px}
+.detailBlock{border:1px solid var(--border);border-radius:9px;padding:12px 13px;background:var(--surface)}
+.detailTitle{display:block;margin-bottom:8px;color:var(--muted);font:700 9.5px "Fira Code";letter-spacing:.09em;text-transform:uppercase}
+.detailBlock dl{display:flex;margin:0;flex-direction:column;gap:0}
+.detailBlock dl>div{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px dashed var(--border-soft)}
+.detailBlock dl>div:last-child{border-bottom:0}
+.detailBlock dt{color:#4f5e75;font-size:11px}
+.detailBlock dd{margin:0;font:600 12px "Fira Code";font-variant-numeric:tabular-nums;white-space:nowrap}
+.detailBlock .highlightRow{margin:0 -6px;padding:5px 6px;border-radius:6px;background:var(--primary-soft)}
+.detailBlock .highlightRow dd{color:var(--primary)}
+.weightLine{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 0}
+.weightLine>span{color:#4f5e75;font-size:11px}
+.weightLine>div{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+.weightLine b{border:1px solid var(--border);border-radius:999px;padding:2px 8px;background:var(--surface-soft);font:600 9.5px "Fira Code"}
+.weightLine b.muted{color:var(--subtle)}
+.bandTable{width:100%;margin-top:6px;border-collapse:collapse}
+.bandTable td{padding:4px 0;border-top:1px solid var(--border-soft);font-size:10.5px}
+.bandTable td:last-child{text-align:right}
+.bandTable tr.current td{font-weight:600}
 .bandPill{display:inline-block;border-radius:999px;padding:2px 8px;font:600 10px "Fira Code";white-space:nowrap}
-.bandPill.band-off{background:var(--danger-bg);color:var(--danger)}
-.bandPill.band-watch{background:var(--warning-bg);color:var(--warning)}
-.bandPill.band-keep{background:var(--success-bg);color:var(--success)}
-.bandPill.band-scale{background:var(--blue-bg);color:var(--primary)}
-.bandPill.band-unknown{background:#eef1f5;color:var(--subtle)}
-.planNote{display:flex;margin:9px 0 0;align-items:flex-start;gap:6px;border-radius:8px;padding:8px 9px;background:var(--blue-bg);color:#294b91;font-size:10.5px;line-height:1.45}
-.planNote svg{flex:0 0 auto;margin-top:1px}
-.planWarning{display:flex;margin:0 18px 16px;align-items:flex-start;gap:11px;border:1px solid #f0c4c9;border-radius:10px;padding:12px 14px;background:var(--danger-bg);color:#7c1d26}
-.planWarning strong{display:block;margin-bottom:3px;font-size:12.5px}
-.planWarning span{font-size:11px;line-height:1.5}
-.windowStrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;padding:0 18px 14px}
-.windowStrip article{border:1px solid var(--border);border-radius:10px;padding:11px 12px;background:#fff}
-.windowStrip header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}
-.windowStrip header strong{font-size:12px}
-.windowStrip dl{display:flex;margin:0;flex-direction:column;gap:3px}
-.windowStrip dl>div{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-.windowStrip dt{color:var(--muted);font-size:10.5px}
-.windowStrip dd{margin:0;font-size:11.5px;font-variant-numeric:tabular-nums}
-.pacingStrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:0 18px 14px}
-.pacingStrip article{border:1px solid var(--border);border-radius:10px;padding:11px 12px;background:#fff}
-.pacingStrip article.highlight{border-color:#c9b07a;background:#fffaf0}
-.pacingStrip small{display:block;color:var(--muted);font-size:10.5px}
-.pacingStrip strong{display:block;margin:3px 0;font:700 17px "Fira Code";font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.pacingStrip strong.behind{color:var(--danger)}.pacingStrip strong.ahead{color:var(--success)}
-.pacingStrip em{color:var(--subtle);font-size:10px;font-style:normal;line-height:1.4}
-.planFootnote{margin:0;padding:0 18px 16px;color:var(--subtle);font-size:10.5px}
-.fieldHint{display:block;margin-top:3px;color:var(--subtle);font-size:10px;font-weight:400;line-height:1.4}
-.scoreValue{font:700 13px "Fira Code";font-variant-numeric:tabular-nums}
-.scoreValue.band-off{color:var(--danger)}.scoreValue.band-watch{color:var(--warning)}
-.scoreValue.band-keep{color:var(--success)}.scoreValue.band-scale{color:var(--primary)}
-.scoreValue.band-unknown{color:var(--subtle)}
-.scoreMeter{position:relative;display:block;width:96px;height:5px;margin:4px 0 3px;border-radius:999px;background:#e7ecf3;overflow:hidden}
+.bandPill.band-off{background:var(--band-off-bg);color:var(--band-off)}
+.bandPill.band-watch{background:var(--band-watch-bg);color:var(--band-watch)}
+.bandPill.band-keep{background:var(--band-keep-bg);color:var(--band-keep)}
+.bandPill.band-scale{background:var(--band-scale-bg);color:var(--band-scale)}
+.bandPill.band-unknown{background:var(--band-idle-bg);color:var(--band-idle)}
+
+.windowTable{width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:9px;background:var(--surface);overflow:hidden}
+.windowTable th{padding:8px 11px;border-bottom:1px solid var(--border);background:var(--surface-soft);color:var(--muted);font:600 9.5px "Fira Code";letter-spacing:.07em;text-align:left;text-transform:uppercase}
+.windowTable td{padding:8px 11px;border-bottom:1px solid var(--border-soft);font-size:11.5px;font-variant-numeric:tabular-nums}
+.windowTable tr:last-child td{border-bottom:0}
+.windowTable th:not(:first-child),.windowTable td:not(:first-child){text-align:right}
+.pacingLine{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:12px;color:#4f5e75;font-size:11px}
+.pacingLine b{color:var(--ink);font-family:"Fira Code";font-variant-numeric:tabular-nums}
+.planHint{margin:12px 0 0;border-radius:8px;padding:10px 12px;background:var(--blue-bg);color:#294b91;font-size:11.5px}
+
+/* Decision chips: the counters are the filter. */
+.chipRow{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:10px}
+.decisionChip{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;align-items:center;gap:2px 10px;border:1px solid var(--border);border-radius:var(--radius);padding:13px 15px;background:var(--surface);text-align:left;transition:border-color var(--motion),box-shadow var(--motion),transform var(--motion)}
+.decisionChip svg{grid-row:1/3;width:34px;height:34px;padding:8px;border-radius:9px}
+.decisionChip strong{font:700 21px "Fira Code";font-variant-numeric:tabular-nums;letter-spacing:-.04em;line-height:1}
+.decisionChip span{grid-column:2;font-size:11.5px;font-weight:600}
+.decisionChip small{grid-column:2;color:var(--subtle);font-size:9.5px}
+.decisionChip:hover{transform:translateY(-1px);box-shadow:0 3px 10px rgb(20 34 58 / 9%)}
+.decisionChip.active{box-shadow:0 0 0 2px currentcolor inset}
+.decisionChip.band-off{color:var(--band-off)}.decisionChip.band-off svg{background:var(--band-off-bg)}
+.decisionChip.band-watch{color:var(--band-watch)}.decisionChip.band-watch svg{background:var(--band-watch-bg)}
+.decisionChip.band-keep{color:var(--band-keep)}.decisionChip.band-keep svg{background:var(--band-keep-bg)}
+.decisionChip.band-scale{color:var(--band-scale)}.decisionChip.band-scale svg{background:var(--band-scale-bg)}
+.decisionChip.band-idle{color:var(--band-idle)}.decisionChip.band-idle svg{background:var(--band-idle-bg)}
+.decisionChip span,.decisionChip small{color:var(--ink)}
+.decisionChip small{color:var(--subtle)}
+
+/* The table: one row is one decision. */
+.tableCard{overflow:hidden}
+.tableHead{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;padding:15px 18px 13px}
+.tableHeadTitle h2{margin-bottom:2px}
+.tableHeadTitle p{margin:0;color:var(--muted);font-size:11.5px}
+.tableHeadTitle b{color:var(--ink)}
+.filterBar{display:flex;flex-wrap:wrap;align-items:center;gap:7px}
+.filterBar select{min-height:34px;border:1px solid var(--border);border-radius:7px;padding:0 8px;background:var(--surface);color:var(--ink);font-size:11.5px}
+.linkAction{border:0;background:transparent;color:var(--primary);font:600 11.5px "Fira Sans";text-decoration:underline}
+.opsTable{width:100%;border-collapse:collapse}
+.opsTable thead th{position:sticky;top:0;z-index:2;padding:8px 14px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--surface-soft);color:var(--muted);font:600 9.5px "Fira Code";letter-spacing:.08em;text-align:left;text-transform:uppercase;white-space:nowrap}
+.opsTable td{padding:10px 14px;border-bottom:1px solid var(--border-soft);vertical-align:middle}
+.opsTable tbody tr{cursor:pointer;transition:background var(--motion)}
+.opsTable tbody tr:hover{background:var(--surface-soft)}
+.opsTable tbody tr:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
+.opsTable .numeric,.opsTable th.numeric{text-align:right}
+.opsTable .scoreCol{width:132px}
+.entityCell{max-width:420px}
+.entityCell strong{display:block;margin:3px 0 1px;font-size:12.5px;line-height:1.35;overflow-wrap:anywhere}
+.entityCell small{display:block;color:var(--subtle);font-size:9.5px}
+.overrideNote{display:block;margin-top:4px;color:var(--band-watch);font-size:10.5px;font-style:normal;line-height:1.4}
+tr.band-edge-off td:first-child{box-shadow:inset 3px 0 0 var(--band-off)}
+tr.band-edge-watch td:first-child{box-shadow:inset 3px 0 0 var(--band-watch)}
+tr.band-edge-keep td:first-child{box-shadow:inset 3px 0 0 var(--band-keep)}
+tr.band-edge-scale td:first-child{box-shadow:inset 3px 0 0 var(--band-scale)}
+tr.band-edge-unknown td:first-child{box-shadow:inset 3px 0 0 var(--band-idle-line)}
+.scoreValue{font:700 13.5px "Fira Code";font-variant-numeric:tabular-nums}
+.scoreValue.band-off{color:var(--band-off)}.scoreValue.band-watch{color:var(--band-watch)}
+.scoreValue.band-keep{color:var(--band-keep)}.scoreValue.band-scale{color:var(--band-scale)}
+.scoreValue.band-unknown{color:var(--band-idle)}
+.scoreMeter{position:relative;display:block;width:104px;height:5px;margin-top:5px;border-radius:999px;background:#e7ecf3;overflow:hidden}
 .scoreMeter::before,.scoreMeter::after{position:absolute;top:0;bottom:0;width:1px;background:#b9c4d4;content:""}
 .scoreMeter::before{left:53.33%}.scoreMeter::after{left:66.67%}
 .scoreMeter u{position:absolute;top:0;bottom:0;left:80%;width:1px;background:#b9c4d4}
 .scoreMeter i{display:block;height:100%;border-radius:999px}
-.scoreMeter i.band-off{background:var(--danger)}.scoreMeter i.band-watch{background:#d99206}
-.scoreMeter i.band-keep{background:var(--success)}.scoreMeter i.band-scale{background:var(--primary)}
-.reasonCell{max-width:250px;color:#4f5e75;font-size:11px;line-height:1.45;white-space:normal}
+.scoreMeter i.band-off{background:var(--band-off)}.scoreMeter i.band-watch{background:#d99206}
+.scoreMeter i.band-keep{background:var(--band-keep)}.scoreMeter i.band-scale{background:var(--band-scale)}
+.scoreMeter i.band-unknown{background:var(--band-idle-line)}
 .mutedCell{color:var(--subtle)}
-.stickyTable thead th{position:sticky;top:0;z-index:2;background:var(--surface-soft);box-shadow:inset 0 -1px 0 var(--border)}
-.dangerAction.small,.primaryAction.small{min-height:30px;padding:0 10px;font-size:11px}
-.drawerActionBar{display:flex;flex-direction:column;gap:9px;margin:0 0 14px;border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--surface-soft)}
-@media(max-width:900px){.planGrid,.windowStrip,.pacingStrip{grid-template-columns:1fr}.reasonCell{max-width:none}}
+.ghostAction{display:inline-flex;min-height:30px;align-items:center;gap:5px;border:1px solid var(--border);border-radius:7px;padding:0 10px;background:var(--surface);color:#4f5e75;font:600 11px "Fira Sans"}
+.ghostAction:hover{border-color:#b9c4d4;background:var(--surface-soft)}
+.ghostAction.danger{color:var(--band-off)}
+.ghostAction.danger:hover{border-color:var(--band-off-line);background:var(--band-off-bg)}
+.primaryAction.small{min-height:30px;padding:0 11px;font-size:11px}
 
-.metricStrip{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+/* Evidence drawer */
+.drawerVerdict{display:flex;align-items:center;gap:11px;margin-bottom:14px;border-radius:9px;padding:12px 13px;background:var(--surface-soft)}
+.drawerVerdict p{margin:0;color:#4f5e75;font-size:11.5px;line-height:1.5}
+.drawerActionBar{display:flex;flex-direction:column;gap:9px;margin-bottom:14px;border:1px solid var(--border);border-radius:9px;padding:12px;background:var(--surface-soft)}
+.evidenceList .strong dt{color:var(--ink);font-weight:600}
+.evidenceList .strong dd{color:var(--primary);font-weight:700}
+.ruleTrace summary{color:var(--muted);font-size:11px;cursor:pointer}
+.ruleTrace>div{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+
+@media(max-width:980px){
+  .commandBar{flex-wrap:wrap}
+  .commandMeta{flex:1 0 100%}
+  .planIdentity,.pulse{flex:1 0 44%;border-right:0;border-bottom:1px solid var(--border-soft)}
+  .planToggle{flex:1 0 100%;justify-content:center;min-height:40px;border-left:0}
+  .opsTable .scoreCol{width:auto}
+}

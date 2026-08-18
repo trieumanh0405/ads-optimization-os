@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, ChevronDown, Info } from "lucide-react";
+import { AlertTriangle, ChevronDown } from "lucide-react";
 import type { ScopeSummary } from "@/core/pacing";
 import type { ProjectConfig } from "@/core/schemas";
 import { formatNumber } from "../helpers/format-utils";
@@ -10,28 +10,27 @@ import { achievementBand, formatCount, formatPercent } from "../helpers/reason-l
 export type PlanOverviewProps = {
   summary: ScopeSummary;
   config: ProjectConfig;
-  /** Weights of the second layer, shown so the score is never a black box. */
   contextWeights: { entity: number; context: number };
   contextSource: "PARENT" | "PROJECT";
-  /** Account-level score, used to warn when the plan target looks unreachable. */
-  accountAchievement: number | null;
-  /** Configured score weight per window, shown next to each window label. */
   windowWeights: Array<{ id: string; label: string; weight: number }>;
 };
 
-const BANDS: Array<{ min: number; max: number | null; label: string; tone: string }> = [
+const BANDS = [
   { min: 1.2, max: null, label: "Giữ / tăng đầu tư", tone: "scale" },
   { min: 1.0, max: 1.2, label: "Giữ", tone: "keep" },
   { min: 0.8, max: 1.0, label: "Giữ ad / giảm ngân sách", tone: "watch" },
   { min: 0, max: 0.8, label: "Tắt", tone: "off" }
-];
+] as const;
 
-function Figure({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: string }) {
+/** A number the operator reads at a glance, with its unit and one line of context. */
+function Pulse({
+  label, value, sub, tone, wide
+}: { label: string; value: string; sub?: string; tone?: string; wide?: boolean }) {
   return (
-    <div className={`planFigure${tone ? ` band-${tone}` : ""}`}>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
-      {hint && <small>{hint}</small>}
+    <div className={`pulse${tone ? ` band-${tone}` : ""}${wide ? " wide" : ""}`}>
+      <span className="pulseLabel">{label}</span>
+      <strong className="pulseValue">{value}</strong>
+      {sub && <span className="pulseSub">{sub}</span>}
     </div>
   );
 }
@@ -41,89 +40,137 @@ export function PlanOverview({
   config,
   contextWeights,
   contextSource,
-  accountAchievement,
   windowWeights
 }: PlanOverviewProps) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const currency = summary.currency;
   const { actual, plan, pacing, today } = summary;
   const hasEstimate = plan.rate !== null;
   const band = achievementBand(summary.achievement);
 
-  // With the second layer switched on, the score a rule matches is not the
-  // entity's own score, so the real pass mark moves. Spelling it out keeps the
-  // threshold table honest.
-  const effectiveOffThreshold = contextWeights.context > 0 && accountAchievement !== null && contextSource === "PROJECT"
-    ? (0.8 - contextWeights.context * accountAchievement) / contextWeights.entity
-    : null;
+  const money = (value: number | null | undefined) => formatNumber(value ?? null, currency);
 
-  const targetUnreachable = accountAchievement !== null && accountAchievement < 0.8;
+  // With the second layer on, the score a rule matches is not the entity's own,
+  // so the real pass mark moves. Left unsaid, the threshold table lies.
+  const effectiveOffThreshold = contextWeights.context > 0 && contextSource === "PROJECT" && summary.achievement !== null
+    ? (0.8 - contextWeights.context * summary.achievement) / contextWeights.entity
+    : null;
+  const thresholdDistorted = effectiveOffThreshold !== null && Math.abs(effectiveOffThreshold - 0.8) > 0.05;
+  const targetUnreachable = summary.achievement !== null && summary.achievement < 0.8;
+
+  const budgetGap = pacing.additionalDailySpend;
+  const planConfigured = pacing.planEndDate !== null && plan.targetQualifiedResults !== null;
 
   return (
-    <section className="sectionCard planOverview">
-      <div className="sectionHeader">
-        <div>
-          <span className="sectionKicker">KẾ HOẠCH VÀ THỰC TẾ</span>
-          <h2>{summary.scopeName}</h2>
-          <p>
-            {summary.optimizationEventLabel} · {summary.metricKey} · {summary.entityCount.toLocaleString("vi-VN")} entity
-          </p>
+    <section className="planPanel">
+      <div className="planPulseRow">
+        <div className="planIdentity">
+          <span className="planScopeName">{summary.scopeName}</span>
+          <small>{summary.metricKey} · {summary.entityCount.toLocaleString("vi-VN")} entity</small>
         </div>
-        <button className="iconAction" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label="Thu gọn bảng tổng quan">
-          <ChevronDown size={18} className={open ? "" : "rotated"} />
+
+        <Pulse label="Đã tiêu" value={money(summary.spend)} />
+        <Pulse
+          label="Chi phí / result"
+          value={money(actual.costPerReportedResult)}
+          sub={`mục tiêu ${money(plan.targetCostPerReportedResult)}`}
+        />
+        <Pulse
+          label="So với target"
+          value={formatPercent(summary.achievement)}
+          tone={band}
+          sub={`${formatCount(actual.reportedResults, 0)} ${summary.optimizationEventLabel}`}
+        />
+        {planConfigured && (
+          <Pulse
+            label="Tiến độ sản lượng"
+            value={formatPercent(pacing.resultProgress)}
+            sub={pacing.timeProgress === null ? undefined : `thời gian đã trôi ${formatPercent(pacing.timeProgress)}`}
+            tone={pacing.paceIndex !== null && pacing.paceIndex < 1 ? "off" : "keep"}
+          />
+        )}
+        {planConfigured && budgetGap !== null && (
+          <Pulse
+            label={budgetGap < 0 ? "Có thể giảm mỗi ngày" : "Cần đẩy thêm mỗi ngày"}
+            value={money(Math.abs(budgetGap))}
+            sub={`đang chạy ${money(pacing.currentDailySpend)}`}
+            wide
+          />
+        )}
+
+        <button
+          className="planToggle"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
+          {open ? "Thu gọn" : "Chi tiết"}
+          <ChevronDown size={15} className={open ? "flipped" : ""} />
         </button>
       </div>
 
+      {(targetUnreachable || thresholdDistorted) && (
+        <div className="planAlerts">
+          {targetUnreachable && (
+            <p className="alertSevere">
+              <AlertTriangle size={15} />
+              <span>
+                Nhóm <b>{summary.scopeName}</b> đang ở <b>{formatPercent(summary.achievement)}</b> so với target,
+                nên phần lớn entity sẽ rơi vào dải tắt. Cân nhắc xem lại target hoặc offer trước khi tắt hàng loạt.
+              </span>
+            </p>
+          )}
+          {thresholdDistorted && (
+            <p className="alertWarn">
+              <AlertTriangle size={15} />
+              <span>
+                Điểm gộp {formatPercent(contextWeights.context)} theo tổng tài khoản đang kéo ngưỡng tắt thật
+                của từng entity lên <b>{formatPercent(effectiveOffThreshold)}</b> thay vì 80%.
+                Đổi “Điểm nhóm lấy từ” sang cấp cha nếu không cố ý.
+              </span>
+            </p>
+          )}
+        </div>
+      )}
+
       {open && (
-        <>
-          <div className="planGrid">
-            <dl className="planBlock">
-              <span className="planBlockTitle">Thực tế</span>
-              <Figure label="Đã tiêu" value={formatNumber(summary.spend, currency)} />
-              <Figure label={`${summary.optimizationEventLabel} nền tảng báo`} value={formatCount(actual.reportedResults)} />
-              <Figure label="Chi phí / result báo về" value={formatNumber(actual.costPerReportedResult, currency)} />
-              {hasEstimate && (
-                <>
-                  <Figure
-                    label="Result ước tính sau lọc"
-                    value={formatCount(actual.qualifiedResults)}
-                    hint={`${formatPercent(plan.rate)} của số báo về`}
-                  />
-                  <Figure label="Chi phí / result sau lọc" value={formatNumber(actual.costPerQualifiedResult, currency)} />
-                </>
-              )}
-              <Figure
-                label="So với target"
-                value={formatPercent(summary.achievement)}
-                tone={band}
-              />
-            </dl>
+        <div className="planDetail">
+          <div className="planDetailGrid">
+            <div className="detailBlock">
+              <span className="detailTitle">Thực tế</span>
+              <dl>
+                <div><dt>Đã tiêu</dt><dd>{money(summary.spend)}</dd></div>
+                <div><dt>{summary.optimizationEventLabel} nền tảng báo</dt><dd>{formatCount(actual.reportedResults, 0)}</dd></div>
+                <div><dt>Chi phí / result</dt><dd>{money(actual.costPerReportedResult)}</dd></div>
+                {hasEstimate && (
+                  <>
+                    <div><dt>Result sau lọc {formatPercent(plan.rate)}</dt><dd>{formatCount(actual.qualifiedResults)}</dd></div>
+                    <div><dt>Chi phí / result sau lọc</dt><dd>{money(actual.costPerQualifiedResult)}</dd></div>
+                  </>
+                )}
+              </dl>
+            </div>
 
-            <dl className="planBlock">
-              <span className="planBlockTitle">Kế hoạch</span>
-              <Figure label="Target chi phí / result" value={formatNumber(plan.targetCostPerQualified, currency)} />
-              <Figure label="Target sản lượng cả kỳ" value={formatCount(plan.targetQualifiedResults, 0)} />
-              {hasEstimate && (
-                <>
-                  <Figure label="% Estimate Rate" value={formatPercent(plan.rate)} />
-                  <Figure
-                    label="Chi phí / result báo về cần đạt"
-                    value={formatNumber(plan.targetCostPerReportedResult, currency)}
-                    hint="Ngưỡng thật khi mua traffic"
-                  />
-                  <Figure label="Result báo về cần có" value={formatCount(plan.targetReportedResults, 0)} />
-                </>
-              )}
-              <Figure
-                label="Tiến độ sản lượng"
-                value={formatPercent(pacing.resultProgress)}
-                hint={pacing.timeProgress === null ? "Chưa đặt ngày kết thúc" : `Thời gian đã trôi ${formatPercent(pacing.timeProgress)}`}
-              />
-            </dl>
+            <div className="detailBlock">
+              <span className="detailTitle">Kế hoạch</span>
+              <dl>
+                <div><dt>Target chi phí / result</dt><dd>{money(plan.targetCostPerQualified)}</dd></div>
+                {hasEstimate && (
+                  <div className="highlightRow">
+                    <dt>Ngưỡng thật khi mua traffic</dt>
+                    <dd>{money(plan.targetCostPerReportedResult)}</dd>
+                  </div>
+                )}
+                <div><dt>Target sản lượng cả kỳ</dt><dd>{formatCount(plan.targetQualifiedResults, 0)}</dd></div>
+                <div>
+                  <dt>Kỳ kế hoạch</dt>
+                  <dd>{pacing.planStartDate} {pacing.planEndDate ? `→ ${pacing.planEndDate}` : "→ chưa đặt"}</dd>
+                </div>
+              </dl>
+            </div>
 
-            <div className="planBlock">
-              <span className="planBlockTitle">Trọng số và ngưỡng</span>
-              <div className="weightRow">
+            <div className="detailBlock">
+              <span className="detailTitle">Trọng số và ngưỡng</span>
+              <div className="weightLine">
                 <span>Cửa sổ</span>
                 <div>
                   {windowWeights.map((window) => (
@@ -133,7 +180,7 @@ export function PlanOverview({
                   ))}
                 </div>
               </div>
-              <div className="weightRow">
+              <div className="weightLine">
                 <span>Phạm vi</span>
                 <div>
                   <b>Entity {formatPercent(contextWeights.entity)}</b>
@@ -144,124 +191,68 @@ export function PlanOverview({
                 <tbody>
                   {BANDS.map((item) => (
                     <tr key={item.label} className={band === item.tone ? "current" : ""}>
-                      <td className="mono">{Math.round(item.min * 100)}%</td>
-                      <td className="mono">{item.max === null ? "Max" : `${Math.round(item.max * 100)}%`}</td>
+                      <td className="mono">
+                        {Math.round(item.min * 100)}%
+                        {item.max === null ? " trở lên" : ` - ${Math.round(item.max * 100)}%`}
+                      </td>
                       <td><span className={`bandPill band-${item.tone}`}>{item.label}</span></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {effectiveOffThreshold !== null && (
-                <p className="planNote">
-                  <Info size={14} />
-                  Vì điểm gộp 40% theo tổng tài khoản ({formatPercent(accountAchievement)}), ngưỡng tắt thật của
-                  từng entity đang là <b>{formatPercent(effectiveOffThreshold)}</b> chứ không phải 80%.
-                </p>
+            </div>
+          </div>
+
+          <table className="windowTable">
+            <thead>
+              <tr>
+                <th>Cửa sổ</th>
+                <th>Chi tiêu</th>
+                <th>Result</th>
+                <th>Chi phí / result</th>
+                {hasEstimate && <th>Sau lọc</th>}
+                <th>Đạt target</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.windows.map((window) => (
+                <tr key={window.id}>
+                  <td><strong>{window.label}</strong></td>
+                  <td className="mono">{money(window.spend)}</td>
+                  <td className="mono">{formatCount(window.reportedResults, 0)}</td>
+                  <td className="mono">{money(window.costPerReportedResult)}</td>
+                  {hasEstimate && <td className="mono">{money(window.costPerQualifiedResult)}</td>}
+                  <td>
+                    <span className={`bandPill band-${achievementBand(window.achievement)}`}>
+                      {formatPercent(window.achievement)}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {planConfigured ? (
+            <div className="pacingLine">
+              <span><b>{pacing.remainingDays}</b> ngày còn lại</span>
+              <span><b>{formatCount(pacing.qualifiedRemaining, 0)}</b> result còn phải ra</span>
+              <span><b>{formatCount(pacing.requiredQualifiedPerDay)}</b> / ngày</span>
+              <span>Tổng ngân sách còn cần <b>{money(pacing.remainingBudget)}</b></span>
+              {pacing.requiredDailySpendAtPlanEfficiency !== null && (
+                <span>Nếu đạt đúng target chỉ cần <b>{money(pacing.requiredDailySpendAtPlanEfficiency)}</b> / ngày</span>
               )}
+              <span>
+                Dự phóng cuối ngày <b>{formatCount(today.projectedResults)}</b>
+                {today.basis === "EXTRAPOLATED" ? ` (đã có ${formatCount(today.resultsSoFar, 0)})` : " (theo trung bình các ngày trước)"}
+              </span>
             </div>
-          </div>
-
-          {targetUnreachable && (
-            <div className="planWarning">
-              <AlertTriangle size={18} />
-              <div>
-                <strong>Cả tài khoản đang ở {formatPercent(accountAchievement)} so với target</strong>
-                <span>
-                  Mặt bằng chung kém xa kế hoạch, nên phần lớn entity sẽ rơi vào dải tắt. Trước khi tắt hàng loạt,
-                  cân nhắc xem lại target, offer hoặc tệp thay vì chỉ cắt từng ad.
-                </span>
-              </div>
-            </div>
+          ) : (
+            <p className="planHint">
+              Điền <b>Ngày kết thúc kế hoạch</b> và <b>Số result mục tiêu cả kỳ</b> trong Project &amp; KPI
+              để tool tính tiến độ và ngân sách còn phải đẩy.
+            </p>
           )}
-
-          <div className="windowStrip">
-            {summary.windows.map((window) => (
-              <article key={window.id}>
-                <header>
-                  <strong>{window.label}</strong>
-                  <span className={`bandPill band-${achievementBand(window.achievement)}`}>
-                    {formatPercent(window.achievement)}
-                  </span>
-                </header>
-                <dl>
-                  <div><dt>Chi tiêu</dt><dd className="mono">{formatNumber(window.spend, currency)}</dd></div>
-                  <div><dt>Result</dt><dd className="mono">{formatCount(window.reportedResults)}</dd></div>
-                  <div><dt>Chi phí / result</dt><dd className="mono">{formatNumber(window.costPerReportedResult, currency)}</dd></div>
-                  {hasEstimate && (
-                    <div><dt>Sau lọc</dt><dd className="mono">{formatNumber(window.costPerQualifiedResult, currency)}</dd></div>
-                  )}
-                </dl>
-              </article>
-            ))}
-          </div>
-
-          <div className="pacingStrip">
-            <article>
-              <small>Còn lại</small>
-              <strong>{pacing.remainingDays === null ? "N/A" : `${pacing.remainingDays} ngày`}</strong>
-              <em>{pacing.planEndDate ? `đến ${pacing.planEndDate}` : "chưa đặt ngày kết thúc kế hoạch"}</em>
-            </article>
-            <article>
-              <small>Tiến độ so với lịch</small>
-              <strong className={pacing.paceIndex !== null && pacing.paceIndex < 1 ? "behind" : "ahead"}>
-                {formatPercent(pacing.paceIndex)}
-              </strong>
-              <em>{pacing.paceIndex === null ? "cần target sản lượng và ngày kết thúc" : pacing.paceIndex < 1 ? "đang chậm hơn kế hoạch" : "đang nhanh hơn kế hoạch"}</em>
-            </article>
-            <article>
-              <small>Còn phải ra</small>
-              <strong>{formatCount(pacing.qualifiedRemaining, 0)}</strong>
-              <em>{pacing.requiredQualifiedPerDay === null ? "N/A" : `${formatCount(pacing.requiredQualifiedPerDay)} / ngày`}</em>
-            </article>
-            <article className="highlight">
-              <small>
-                {pacing.additionalDailySpend !== null && pacing.additionalDailySpend < 0
-                  ? "Có thể giảm mỗi ngày"
-                  : "Ngân sách cần đẩy thêm"}
-              </small>
-              <strong>
-                {pacing.additionalDailySpend === null
-                  ? "N/A"
-                  : formatNumber(Math.abs(pacing.additionalDailySpend), currency)}
-              </strong>
-              <em>
-                {pacing.requiredDailySpend === null
-                  ? "cần target sản lượng và ngày kết thúc"
-                  : pacing.additionalDailySpend !== null && pacing.additionalDailySpend < 0
-                    ? `đang chạy ${formatNumber(pacing.currentDailySpend, currency)}, chỉ cần ${formatNumber(pacing.requiredDailySpend, currency)}`
-                    : `mỗi ngày · đang chạy ${formatNumber(pacing.currentDailySpend, currency)}`}
-              </em>
-            </article>
-            <article>
-              <small>Tổng ngân sách còn cần</small>
-              <strong>{formatNumber(pacing.remainingBudget, currency)}</strong>
-              <em>
-                {pacing.requiredDailySpendAtPlanEfficiency === null
-                  ? "N/A"
-                  : `nếu đạt đúng target: ${formatNumber(pacing.requiredDailySpendAtPlanEfficiency, currency)} / ngày`}
-              </em>
-            </article>
-            <article>
-              <small>Dự phóng cuối ngày</small>
-              <strong>{formatCount(today.projectedResults)}</strong>
-              <em>
-                {today.basis === "EXTRAPOLATED"
-                  ? `đã có ${formatCount(today.resultsSoFar)} lúc ${formatPercent(today.dayElapsed)} ngày`
-                  : today.basis === "TRAILING_AVERAGE"
-                    ? "còn sớm, đang lấy trung bình các ngày trước"
-                    : "chưa đủ dữ liệu"}
-              </em>
-            </article>
-          </div>
-
-          <p className="planFootnote">
-            Kỳ kế hoạch {pacing.planStartDate}
-            {pacing.planEndDate ? ` đến ${pacing.planEndDate}` : " (chưa đặt ngày kết thúc)"} ·
-            đã qua {pacing.elapsedDays} ngày
-            {pacing.totalDays ? ` / ${pacing.totalDays}` : ""} ·
-            múi giờ {config.timezone}
-          </p>
-        </>
+        </div>
       )}
     </section>
   );
