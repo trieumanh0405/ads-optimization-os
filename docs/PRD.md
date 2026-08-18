@@ -76,15 +76,21 @@ The product reduces repetitive spreadsheet work. It does not claim to replace me
 - Apply CBO/ABO and max-scale guardrails.
 - Work when the import contains only the lowest available entity level.
 
-### FR-07 — Decision board
+### FR-07 — Operating screen
 
-- Filter by entity level/action and search entity.
-- Show KPI today, target, achievement, action, adjustment, confidence and rule.
-- Evidence drawer shows evaluated value, actual winning rule window, ownership/status and matched rule IDs.
+- One screen carries the plan panel, the decisions and their execution.
+- Plan panel shows actual vs plan, window and scope weights, the threshold table
+  with the current band marked, per-window cost and achievement, and the budget
+  still required to land the plan on time.
+- Filter by entity level, recommendation and execution status; search entity.
+- Show KPI today, target, achievement against the bands, action, adjustment and
+  a readable reason.
+- Evidence drawer shows entity and blended scores, peer rank, evaluated value,
+  the winning rule window, ownership/status and matched rule IDs.
 
-### FR-08 — Action Queue
+### FR-08 — Execution
 
-- Queue only executable/manual actions; KEEP and PENDING_DATA remain on Decision Board.
+- Execution controls sit on the decision row; KEEP and PENDING_DATA carry none.
 - Support PENDING, DONE, REJECTED and DEFERRED.
 - Record operator, time, transition and note.
 - Terminal actions cannot transition backward.

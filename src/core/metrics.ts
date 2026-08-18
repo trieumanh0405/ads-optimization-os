@@ -55,18 +55,33 @@ export function computeMetric(totals: MetricTotals, definition: MetricDefinition
   return (numerator / denominator) * definition.multiplier;
 }
 
-export function achievement(value: number | null, target: number, direction: MetricDefinition["direction"], cap = 10): number | null {
+/**
+ * Achievement is always expressed as "higher is better".
+ *
+ * A cost-per-result of exactly zero is a data artefact, not a perfect result:
+ * it only happens when a period recorded results with no recorded spend, which
+ * is common while a sheet sync lags. Returning a capped "perfect" score there
+ * let a genuinely weak entity be rescued by one broken row, so this returns
+ * null instead and the period is treated as missing evidence.
+ */
+export function achievement(value: number | null, target: number, direction: MetricDefinition["direction"]): number | null {
   if (value === null || value < 0 || target <= 0) return null;
-  if (direction === "LOWER_IS_BETTER") return value === 0 ? cap : target / value;
+  if (direction === "LOWER_IS_BETTER") return value === 0 ? null : target / value;
   return value / target;
 }
 
-export function weightedAverage(items: Array<{ value: number | null; weight: number; required?: boolean }>): number | null {
+export function weightedAverage(
+  items: Array<{ value: number | null; weight: number; required?: boolean }>,
+  cap?: number
+): number | null {
   if (items.some((item) => item.required && item.value === null)) return null;
   const available = items.filter((item): item is { value: number; weight: number; required?: boolean } => item.value !== null && item.weight > 0);
   const totalWeight = available.reduce((sum, item) => sum + item.weight, 0);
   if (!available.length || totalWeight <= 0) return null;
-  return available.reduce((sum, item) => sum + item.value * item.weight, 0) / totalWeight;
+  return available.reduce(
+    (sum, item) => sum + (cap === undefined ? item.value : Math.min(item.value, cap)) * item.weight,
+    0
+  ) / totalWeight;
 }
 
 /**

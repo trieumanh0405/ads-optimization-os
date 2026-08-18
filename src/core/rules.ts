@@ -1,6 +1,6 @@
 import type { ActionCode, MetricDefinition, OptimizationRule, OptimizationScope, ProjectConfig } from "./schemas";
 import type { EntityEvidence, WindowId } from "./windows";
-import { contextGeometricAchievement } from "./windows";
+import { contextAchievementFor, effectivePlanTarget } from "./windows";
 import type { MetricTotals } from "./metrics";
 
 export type Recommendation = {
@@ -24,9 +24,13 @@ export type Recommendation = {
   evaluatedValue: number | null;
   targetMetric: number;
   weightedAchievement: number | null;
+  /** Entity score after blending with its context; this is what rules matched. */
+  blendedAchievement: number | null;
   contextWeightedAchievement: number | null;
   cohortWeightedAchievement: number | null;
   cohortBenchmark: number | null;
+  cohortRank: number | null;
+  cohortSize: number | null;
   minimumWindowAchievement: number | null;
   trendRatio: number | null;
   redFlagWindowIds: string[];
@@ -70,17 +74,33 @@ export function canonicalScoreSource(source: string): string {
   return source;
 }
 
-function scoreFor(rule: OptimizationRule, entity: EntityEvidence, all: EntityEvidence[]): number | null {
+const AGGREGATE_SCORE_SOURCES = [
+  "GEOMETRIC", "PLAN_GEOMETRIC", "ENTITY_GEOMETRIC",
+  "CONTEXT_GEOMETRIC", "COHORT_GEOMETRIC", "MIN_WINDOW", "TREND"
+];
+
+function scoreFor(
+  rule: OptimizationRule,
+  entity: EntityEvidence,
+  all: EntityEvidence[],
+  scope: OptimizationScope
+): number | null {
   const scoreSource = canonicalScoreSource(rule.scoreSource);
   if (rule.evaluationField === "ACHIEVEMENT") {
-    if (["GEOMETRIC", "PLAN_GEOMETRIC"].includes(scoreSource)) return entity.weightedAchievement;
-    if (scoreSource === "CONTEXT_GEOMETRIC") return contextGeometricAchievement(entity, all);
+    // The plan score a rule matches is the blended one, so the configured
+    // entity/context weights actually drive decisions. With context weight 0
+    // the blend equals the raw entity score.
+    if (["GEOMETRIC", "PLAN_GEOMETRIC"].includes(scoreSource)) {
+      return entity.blendedAchievement ?? entity.weightedAchievement;
+    }
+    if (scoreSource === "ENTITY_GEOMETRIC") return entity.weightedAchievement;
+    if (scoreSource === "CONTEXT_GEOMETRIC") return contextAchievementFor(entity, all, scope);
     if (scoreSource === "COHORT_GEOMETRIC") return entity.cohortWeightedAchievement;
     if (scoreSource === "MIN_WINDOW") return entity.minimumWindowAchievement;
     if (scoreSource === "TREND") return entity.trendRatio;
     return entity.windows[scoreSource as WindowId]?.achievement ?? null;
   }
-  if (["GEOMETRIC", "PLAN_GEOMETRIC", "CONTEXT_GEOMETRIC", "COHORT_GEOMETRIC", "MIN_WINDOW", "TREND"].includes(scoreSource)) return null;
+  if (AGGREGATE_SCORE_SOURCES.includes(scoreSource)) return null;
   const window = entity.windows[scoreSource as WindowId];
   if (!window) return null;
   if (rule.evaluationField === "METRIC_VALUE") return window.value;
@@ -131,14 +151,26 @@ function evidenceForRule(entity: EntityEvidence, rule: OptimizationRule, config:
   return spend >= spendThreshold && evidenceCount >= rule.minResults;
 }
 
+/** Results and days of history that count as a full-strength sample. */
+const FULL_CONFIDENCE_RESULTS = 20;
+const FULL_CONFIDENCE_ROWS = 7;
+
+/**
+ * How much history stands behind this recommendation, on an absolute scale.
+ *
+ * Scaling by the rule's own minResults made almost every row read 100%, because
+ * the default minimum is one result. Anchoring to a fixed sample size lets the
+ * column separate a decision backed by three results from one backed by fifty.
+ */
 function confidence(entity: EntityEvidence, rule: OptimizationRule, definition: MetricDefinition): number {
   const sourceIds = evidenceSourceIds(entity, rule.evidenceSource);
   const sources = sourceIds.map((id) => entity.windows[id]).filter((item): item is NonNullable<typeof item> => item !== null);
   if (!sources.length) return 0;
   const evidenceCount = sources.reduce((sum, source) => sum + getDenominatorEvidence(source.totals, definition), 0);
-  const resultConfidence = Math.min(1, evidenceCount / Math.max(1, rule.minResults * 2));
-  const rowConfidence = Math.min(1, sources.reduce((sum, source) => sum + source.rowCount, 0) / 3);
-  return Number(((resultConfidence * 0.7) + (rowConfidence * 0.3)).toFixed(3));
+  const rowCount = sources.reduce((sum, source) => sum + source.rowCount, 0);
+  const resultConfidence = Math.min(1, evidenceCount / FULL_CONFIDENCE_RESULTS);
+  const rowConfidence = Math.min(1, rowCount / FULL_CONFIDENCE_ROWS);
+  return Number(((resultConfidence * 0.6) + (rowConfidence * 0.4)).toFixed(3));
 }
 
 export function evaluateEntity(
@@ -153,10 +185,10 @@ export function evaluateEntity(
     rule.enabled && rule.ruleSetId === config.ruleSetId && rule.version === config.ruleVersion
     && rule.entityLevel === entity.entityLevel && rule.metricKey === config.primaryMetricKey
   );
-  const scored = relevant.map((rule) => ({ rule, score: scoreFor(rule, entity, all) }));
+  const scored = relevant.map((rule) => ({ rule, score: scoreFor(rule, entity, all, scope) }));
   const evidenced = scored.filter((item) => item.score !== null && evidenceForRule(entity, item.rule, config, definition));
   const matched = evidenced.filter((item) => matches(item.score as number, item.rule));
-  const contextScore = contextGeometricAchievement(entity, all);
+  const contextScore = entity.contextAchievement ?? contextAchievementFor(entity, all, scope);
   const todayWindow = Object.values(entity.windows).find((window) => window?.role === "SIGNAL")
     ?? Object.values(entity.windows)[0];
   const todayMetric = todayWindow?.value ?? null;
@@ -166,10 +198,13 @@ export function evaluateEntity(
     campaignId: entity.campaignId, adsetId: entity.adsetId, currentStatus: entity.status, budgetType: entity.budgetType,
     evidenceWindow: `Configured: ${config.windows.map((item) => item.id).join(" + ")}`, currentMetric: todayMetric,
     evaluatedValue: null,
-    targetMetric: scope.planTarget, weightedAchievement: entity.weightedAchievement,
+    targetMetric: effectivePlanTarget(scope, definition), weightedAchievement: entity.weightedAchievement,
+    blendedAchievement: entity.blendedAchievement ?? entity.weightedAchievement,
     contextWeightedAchievement: contextScore, executionPhase: (entity.entityLevel === "AD" ? 1 : entity.entityLevel === "ADSET" ? 2 : 3) as 1 | 2 | 3,
     cohortWeightedAchievement: entity.cohortWeightedAchievement,
     cohortBenchmark: entity.cohortBenchmark,
+    cohortRank: entity.cohortRank,
+    cohortSize: entity.cohortSize,
     minimumWindowAchievement: entity.minimumWindowAchievement,
     trendRatio: entity.trendRatio,
     redFlagWindowIds: entity.redFlagWindowIds,
@@ -239,16 +274,29 @@ export function evaluateEntity(
     adjustment = null;
     reasons.push("COHORT_BELOW_SCALE_GUARDRAIL");
   }
-  if ((action === "TURN_OFF" || action === "DECREASE_BUDGET")
+  // Opt-in protection for an entity that misses an ambitious plan target while
+  // still clearly outperforming its peers. This used to run unconditionally and
+  // compared at exactly 100%, which vetoed nearly every decision in an account
+  // whose overall performance sits below plan. It now requires an explicit
+  // opt-in, a floor on plan achievement, and a clear margin over the cohort.
+  const guard = scope.cohortGuard;
+  if (guard.enabled
+    && (action === "TURN_OFF" || action === "DECREASE_BUDGET")
     && entity.weightedAchievement !== null && entity.weightedAchievement < 1
-    && entity.cohortWeightedAchievement !== null && entity.cohortWeightedAchievement >= 1) {
+    && entity.weightedAchievement >= guard.minPlanAchievement
+    && entity.cohortWeightedAchievement !== null
+    && entity.cohortWeightedAchievement >= guard.minCohortAchievement) {
     action = "REVIEW_MANUALLY";
     adjustment = null;
     reasons.push("BELOW_PLAN_BUT_COMPETITIVE_WITH_COHORT");
   }
-  if (entity.redFlagWindowIds.length) {
+  // A red flag qualifies a decision to keep or scale: the entity looks
+  // acceptable overall but one window is weak. It blocks scaling and is
+  // reported alongside a KEEP. On an entity already being turned off or scaled
+  // down it repeats what the score has said, so it is left out of the reasons.
+  if (entity.redFlagWindowIds.length && action !== "TURN_OFF" && action !== "DECREASE_BUDGET") {
     reasons.push(`WINDOW_RED_FLAG_${entity.redFlagWindowIds.join("_")}`);
-    if (action === "KEEP" || action === "INCREASE_BUDGET") {
+    if (action === "INCREASE_BUDGET") {
       action = "REVIEW_MANUALLY";
       adjustment = null;
     }

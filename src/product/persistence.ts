@@ -55,16 +55,19 @@ function normalizeState(value: unknown): WorkspaceState {
     } as LocalProject];
   });
   const validViews: WorkspaceView[] = [
-    "OVERVIEW", "PROJECT_SETUP", "DATA_IMPORT", "RULES",
-    "DECISIONS", "ACTIONS", "AI", "RUNS"
+    "OVERVIEW", "OPERATIONS", "PROJECT_SETUP", "DATA_IMPORT", "RULES", "AI", "RUNS"
   ];
+  // Decision board and Action queue were merged into one screen; a stored
+  // workspace still pointing at either lands on the merged one.
+  const legacyViews: Record<string, WorkspaceView> = { DECISIONS: "OPERATIONS", ACTIONS: "OPERATIONS" };
+  const requestedView = legacyViews[state.activeView as string] ?? state.activeView;
   const activeProjectId = typeof state.activeProjectId === "string"
     && projects.some((project) => project.config.projectId === state.activeProjectId)
     ? state.activeProjectId
     : projects[0]?.config.projectId ?? null;
-  const activeView = validViews.includes(state.activeView as WorkspaceView)
-    && (activeProjectId || state.activeView === "OVERVIEW")
-    ? state.activeView as WorkspaceView
+  const activeView = validViews.includes(requestedView as WorkspaceView)
+    && (activeProjectId || requestedView === "OVERVIEW")
+    ? requestedView as WorkspaceView
     : "OVERVIEW";
   return {
     ...structuredClone(EMPTY_WORKSPACE),

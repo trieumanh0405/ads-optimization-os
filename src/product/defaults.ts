@@ -1,4 +1,5 @@
 import { standardMetricLibrary } from "@/core/library";
+import { CURRENT_METHODOLOGY_VERSION } from "@/core/schemas";
 import type { OptimizationRule, OptimizationScope, ProjectConfig } from "@/core/schemas";
 import type { AiProviderDraft, LocalProject, ProjectCreateInput, WorkspaceState } from "./types";
 
@@ -104,8 +105,8 @@ export function buildDefaultRules(
 
     rules.push(createRule({
       id: `${entityLevel.toLowerCase()}-critical-under-target`,
-      name: "Hiệu suất thấp nghiêm trọng",
-      description: "Achievement dưới 70% target sau khi đã đủ bằng chứng.",
+      name: "Dưới 80% target",
+      description: "Achievement dưới 80% target sau khi đã đủ bằng chứng. Dải Off theo bảng ngưỡng.",
       entityLevel,
       scoreSource: "GEOMETRIC",
       evaluationField: "ACHIEVEMENT",
@@ -123,8 +124,10 @@ export function buildDefaultRules(
 
     rules.push(createRule({
       id: `${entityLevel.toLowerCase()}-watch`,
-      name: "Dưới target, cần can thiệp",
-      description: "Achievement từ 70% đến dưới 95%.",
+      name: "Đạt 80% đến dưới 100% target",
+      description: entityLevel === "AD"
+        ? "Achievement từ 80% đến dưới 100%. Giữ ad, chưa tắt, theo dõi thêm."
+        : "Achievement từ 80% đến dưới 100%. Giữ chạy nhưng hạ ngân sách 15%.",
       entityLevel,
       scoreSource: "GEOMETRIC",
       evaluationField: "ACHIEVEMENT",
@@ -135,15 +138,15 @@ export function buildDefaultRules(
       operator: "BETWEEN",
       thresholdFrom: 0.8,
       thresholdTo: 1.0,
-      actionCode: entityLevel === "AD" ? "TURN_OFF" : "DECREASE_BUDGET",
+      actionCode: entityLevel === "AD" ? "KEEP" : "DECREASE_BUDGET",
       actionValue: entityLevel === "AD" ? null : -0.15,
       priority: 70
     }, ruleSetId, metricKey));
 
     rules.push(createRule({
       id: `${entityLevel.toLowerCase()}-keep`,
-      name: "Đạt target",
-      description: "Achievement từ 95% đến dưới 120%.",
+      name: "Đạt 100% đến dưới 120% target",
+      description: "Achievement từ 100% đến dưới 120%. Giữ nguyên.",
       entityLevel,
       scoreSource: "GEOMETRIC",
       evaluationField: "ACHIEVEMENT",
@@ -161,8 +164,8 @@ export function buildDefaultRules(
 
     rules.push(createRule({
       id: `${entityLevel.toLowerCase()}-scale`,
-      name: "Vượt target, có thể đầu tư thêm",
-      description: "Achievement từ 120% target trở lên và đủ sample.",
+      name: "Đạt từ 120% target trở lên",
+      description: "Achievement từ 120% target trở lên và đủ sample. Cấp sở hữu ngân sách thì tăng đầu tư.",
       entityLevel,
       scoreSource: "GEOMETRIC",
       evaluationField: "ACHIEVEMENT",
@@ -189,9 +192,12 @@ export function createProject(input: ProjectCreateInput): LocalProject {
   const ruleSetId = `${projectId}-rules`;
   const windows: ProjectConfig["windows"] = [
     {
+      // Today is a partial day, so it carries score weight but does not raise a
+      // red flag on its own: before the day is over almost every entity would
+      // trip a 80% floor.
       id: "TODAY", label: "Today", kind: "TODAY", days: null, weight: 0.4,
       required: false, includeInScore: true, role: "SIGNAL", minSpend: 0,
-      minResults: 0, redFlagThreshold: 0.8
+      minResults: 0, redFlagThreshold: null
     },
     {
       id: "D3", label: "3 Days", kind: "ROLLING", days: 3, weight: 0.6,
@@ -211,20 +217,31 @@ export function createProject(input: ProjectCreateInput): LocalProject {
     primaryMetricKey: input.primaryMetricKey,
     optimizationEventLabel: input.optimizationEventLabel,
     planTarget: input.target,
+    planTargetResults: null,
+    estimateRate: null,
     ruleSetId,
     ruleVersion: 1,
     windows,
     achievementCap: 2,
     scaleMinWindowAchievement: 1,
     contextScaleMinAchievement: 1,
+    windowBlendMethod: "ARITHMETIC",
+    // PARENT compares a child to the container the buyer manages. Blending
+    // against the whole account instead moves the effective pass mark of every
+    // entity with overall account health, which silently breaks the promise of
+    // the configured bands.
+    contextSource: "PARENT",
     cohortBenchmark: {
       enabled: true,
       lookbackDays: 14,
       minEntities: 3,
       minResults: 5,
-      method: "AGGREGATE",
+      method: "MEDIAN",
+      excludeSelf: true,
       manualValue: null
     },
+    cohortGuard: { enabled: false, minPlanAchievement: 0.7, minCohortAchievement: 1.2 },
+    methodologyVersion: CURRENT_METHODOLOGY_VERSION,
     fallbackClassification: "PFM_INCLUDED"
   };
   const config: ProjectConfig = {
@@ -235,6 +252,7 @@ export function createProject(input: ProjectCreateInput): LocalProject {
     timezone: input.timezone,
     currency: input.currency.toUpperCase(),
     startDate: input.startDate,
+    planEndDate: null,
     primaryMetricKey: input.primaryMetricKey,
     optimizationEventLabel: input.optimizationEventLabel,
     target: input.target,
@@ -247,10 +265,12 @@ export function createProject(input: ProjectCreateInput): LocalProject {
     windows,
     optimizationScopes: [defaultScope],
     classificationRules: [],
+    // Second weighting layer, matching the reference spreadsheet's
+    // "Ads 60% / Total 40%" split.
     contextWeights: {
-      CAMPAIGN: { entity: 0.7, context: 0.3 },
-      ADSET: { entity: 0.65, context: 0.35 },
-      AD: { entity: 0.65, context: 0.35 }
+      CAMPAIGN: { entity: 0.6, context: 0.4 },
+      ADSET: { entity: 0.6, context: 0.4 },
+      AD: { entity: 0.6, context: 0.4 }
     },
     maxDailyScalePct: 0.2,
     maxDailyScaleActions: 3,

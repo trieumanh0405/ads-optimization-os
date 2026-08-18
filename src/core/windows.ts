@@ -12,6 +12,7 @@ import {
   median,
   mergeMetricTotals,
   sumFacts,
+  weightedAverage,
   weightedGeometricMean,
   type MetricTotals
 } from "./metrics";
@@ -51,6 +52,13 @@ export type EntityEvidence = {
   projectWeightedAchievement: number | null;
   cohortWeightedAchievement: number | null;
   cohortBenchmark: number | null;
+  /** 1 = best performer in the peer group over the cohort lookback. */
+  cohortRank: number | null;
+  cohortSize: number | null;
+  /** Context score this entity is blended against (parent or project total). */
+  contextAchievement: number | null;
+  /** Entity score after the second weighting layer; this is what rules match. */
+  blendedAchievement: number | null;
 };
 
 export function expandFactLevels(facts: FactRow[]): FactRow[] {
@@ -115,6 +123,23 @@ export function windowBounds(window: WindowConfig, asOfDate: string, projectStar
   return { start: addDays(asOfDate, -window.days), endExclusive: asOfDate };
 }
 
+/**
+ * Target an individual entity is scored against.
+ *
+ * When the plan target is stated per qualified result but the platform reports
+ * raw ones, the two are not comparable. Scoring a reported cost straight
+ * against a qualified target makes every entity look better than the account
+ * summary, which compares like for like. Converting the target instead keeps
+ * the entity rows and the plan panel on the same scale.
+ */
+export function effectivePlanTarget(scope: OptimizationScope, definition: MetricDefinition): number {
+  const appliesToResultCounts = definition.denominator === "result" || definition.denominator === "qualifiedResult";
+  if (scope.estimateRate === null || !appliesToResultCounts) return scope.planTarget;
+  return definition.direction === "LOWER_IS_BETTER"
+    ? scope.planTarget * scope.estimateRate
+    : scope.planTarget / scope.estimateRate;
+}
+
 function resultEvidence(totals: MetricTotals, definition: MetricDefinition): number {
   if (definition.denominator === "qualifiedResult") return totals.qualifiedResult ?? 0;
   if (definition.denominator === "result") return totals.result ?? 0;
@@ -123,16 +148,35 @@ function resultEvidence(totals: MetricTotals, definition: MetricDefinition): num
   return totals.result ?? 0;
 }
 
-function geometricScore(windows: Record<string, WindowEvidence | null>, configWindows: WindowConfig[], cap: number): number | null {
+/**
+ * Combine the configured time windows into a single entity score.
+ *
+ * ARITHMETIC reproduces the reference spreadsheet the team already trusts.
+ * GEOMETRIC is stricter because a weak window drags the product down and a
+ * single zero collapses the score outright.
+ */
+export function blendWindowScores(
+  items: Array<{ value: number | null; weight: number; required?: boolean }>,
+  cap: number,
+  method: OptimizationScope["windowBlendMethod"]
+): number | null {
+  return method === "GEOMETRIC" ? weightedGeometricMean(items, cap) : weightedAverage(items, cap);
+}
+
+function windowScore(
+  windows: Record<string, WindowEvidence | null>,
+  configWindows: WindowConfig[],
+  scope: OptimizationScope
+): number | null {
   const included = configWindows.filter((window) => window.includeInScore && window.weight > 0);
-  return weightedGeometricMean(included.map((window) => {
+  return blendWindowScores(included.map((window) => {
     const evidence = windows[window.id];
     return {
       value: evidence?.eligible ? evidence.achievement : null,
       weight: window.weight,
       required: window.required
     };
-  }), cap);
+  }), scope.achievementCap, scope.windowBlendMethod);
 }
 
 function minimumScore(windows: Record<string, WindowEvidence | null>, configWindows: WindowConfig[]): number | null {
@@ -160,8 +204,11 @@ function redFlagWindows(
 ): string[] {
   return configWindows.flatMap((window) => {
     const evidence = windows[window.id];
+    // A window only raises a flag once it carries evidence of its own. Without
+    // this a partial Today window flags nearly every entity before midday.
     return window.redFlagThreshold !== null
       && evidence?.eligible
+      && evidence.evidenceCount > 0
       && evidence.achievement !== null
       && evidence.achievement < window.redFlagThreshold
       ? [window.id]
@@ -177,6 +224,7 @@ export function buildEntityEvidence(
   scope: OptimizationScope
 ): EntityEvidence[] {
   const configWindows = resolvedWindows(scope.windows);
+  const entityTarget = effectivePlanTarget(scope, definition);
   const groups = new Map<string, FactRow[]>();
   for (const row of expandFactLevels(facts)) {
     const key = `${row.entityLevel}|${entityId(row)}`;
@@ -207,7 +255,7 @@ export function buildEntityEvidence(
         ...bounds,
         totals,
         value,
-        achievement: achievement(value, scope.planTarget, definition.direction),
+        achievement: achievement(value, entityTarget, definition.direction),
         rowCount: selected.length,
         evidenceCount,
         eligible
@@ -225,13 +273,17 @@ export function buildEntityEvidence(
       status: current.status,
       budgetType: current.budgetType,
       windows,
-      weightedAchievement: geometricScore(windows, configWindows, scope.achievementCap),
+      weightedAchievement: windowScore(windows, configWindows, scope),
       minimumWindowAchievement: minimumScore(windows, configWindows),
       trendRatio: trendScore(windows, configWindows),
       redFlagWindowIds: redFlagWindows(windows, configWindows),
       projectWeightedAchievement: null,
       cohortWeightedAchievement: null,
-      cohortBenchmark: null
+      cohortBenchmark: null,
+      cohortRank: null,
+      cohortSize: null,
+      contextAchievement: null,
+      blendedAchievement: null
     };
   });
 
@@ -264,13 +316,13 @@ export function buildEntityEvidence(
       ...windowBounds(windowConfig, asOfDate, config.startDate),
       totals,
       value,
-      achievement: achievement(value, scope.planTarget, definition.direction),
+      achievement: achievement(value, entityTarget, definition.direction),
       rowCount: aggregateWindows.reduce((sum, item) => sum + item.rowCount, 0),
       evidenceCount,
       eligible: totals.spend >= windowConfig.minSpend && evidenceCount >= windowConfig.minResults
     };
   }
-  const projectWeightedAchievement = geometricScore(projectWindows, configWindows, scope.achievementCap);
+  const projectWeightedAchievement = windowScore(projectWindows, configWindows, scope);
   return evidence.map((item) => ({ ...item, projectWeightedAchievement }));
 }
 
@@ -280,6 +332,98 @@ function baseEntityLevel(facts: FactRow[]): EntityLevel {
   return "CAMPAIGN";
 }
 
+export type CohortModel = {
+  /** Benchmark across the whole peer group, used for display and as a fallback. */
+  benchmark: number | null;
+  /** Peer metric value per entity over the lookback window. */
+  entityValues: Map<string, number>;
+  /** Benchmark an individual entity is judged against. */
+  benchmarkFor: (id: string) => number | null;
+  /** 1 = best performer in the peer group. */
+  rankFor: (id: string) => number | null;
+  size: number;
+};
+
+const EMPTY_COHORT: CohortModel = {
+  benchmark: null,
+  entityValues: new Map(),
+  benchmarkFor: () => null,
+  rankFor: () => null,
+  size: 0
+};
+
+export function buildCohortModel(
+  facts: FactRow[],
+  scope: OptimizationScope,
+  definition: MetricDefinition,
+  asOfDate: string
+): CohortModel {
+  const settings = scope.cohortBenchmark;
+  if (!settings.enabled) return EMPTY_COHORT;
+  if (settings.manualValue) {
+    return { ...EMPTY_COHORT, benchmark: settings.manualValue, benchmarkFor: () => settings.manualValue };
+  }
+  const start = addDays(asOfDate, -settings.lookbackDays + 1);
+  const end = addDays(asOfDate, 1);
+  const level = baseEntityLevel(facts);
+  const selected = facts.filter((fact) => fact.entityLevel === level && fact.date >= start && fact.date < end);
+  const aggregate = sumFacts(selected);
+  if (resultEvidence(aggregate, definition) < settings.minResults) return EMPTY_COHORT;
+
+  const groups = new Map<string, FactRow[]>();
+  for (const fact of selected) {
+    const key = entityId(fact);
+    const existing = groups.get(key);
+    if (existing) existing.push(fact);
+    else groups.set(key, [fact]);
+  }
+  if (groups.size < settings.minEntities) return EMPTY_COHORT;
+
+  const totalsById = new Map([...groups].map(([id, rows]) => [id, sumFacts(rows)]));
+  const entityValues = new Map<string, number>();
+  for (const [id, totals] of totalsById) {
+    const value = computeMetric(totals, definition);
+    if (value !== null) entityValues.set(id, value);
+  }
+
+  const values = [...entityValues.values()];
+  const overall = settings.method === "AGGREGATE" ? computeMetric(aggregate, definition) : median(values);
+
+  // Leave-one-out: an entity is compared to its peers, not to a benchmark it
+  // helped set. Without this, a dominant spender is mostly measured against
+  // itself and always looks average.
+  const benchmarkFor = (id: string): number | null => {
+    if (!settings.excludeSelf) return overall;
+    if (settings.method === "AGGREGATE") {
+      const own = totalsById.get(id);
+      if (!own) return overall;
+      const peers = [...totalsById].filter(([key]) => key !== id).map(([, totals]) => totals);
+      if (!peers.length) return overall;
+      const merged = peers.reduce<MetricTotals>((sum, totals) => mergeMetricTotals(sum, totals), {
+        spend: 0, result: null, qualifiedResult: null, revenue: null, impressions: null, clicks: null, metrics: {}
+      });
+      return computeMetric(merged, definition) ?? overall;
+    }
+    const peerValues = [...entityValues].filter(([key]) => key !== id).map(([, value]) => value);
+    return peerValues.length ? median(peerValues) : overall;
+  };
+
+  const better = definition.direction === "LOWER_IS_BETTER"
+    ? (a: number, b: number) => a - b
+    : (a: number, b: number) => b - a;
+  const ranking = [...entityValues.entries()].sort((a, b) => better(a[1], b[1])).map(([id]) => id);
+  const rankById = new Map(ranking.map((id, index) => [id, index + 1]));
+
+  return {
+    benchmark: overall,
+    entityValues,
+    benchmarkFor,
+    rankFor: (id: string) => rankById.get(id) ?? null,
+    size: entityValues.size
+  };
+}
+
+/** Kept for callers that only need the peer-group benchmark. */
 export function computeCohortBenchmark(
   facts: FactRow[],
   config: ProjectConfig,
@@ -287,30 +431,7 @@ export function computeCohortBenchmark(
   definition: MetricDefinition,
   asOfDate: string
 ): number | null {
-  if (!scope.cohortBenchmark.enabled) return null;
-  if (scope.cohortBenchmark.manualValue) return scope.cohortBenchmark.manualValue;
-  const start = addDays(asOfDate, -scope.cohortBenchmark.lookbackDays + 1);
-  const end = addDays(asOfDate, 1);
-  const level = baseEntityLevel(facts);
-  const selected = facts.filter((fact) => fact.entityLevel === level && fact.date >= start && fact.date < end);
-  const aggregate = sumFacts(selected);
-  if (resultEvidence(aggregate, definition) < scope.cohortBenchmark.minResults) return null;
-  const ids = new Set(selected.map(entityId));
-  if (ids.size < scope.cohortBenchmark.minEntities) return null;
-  if (scope.cohortBenchmark.method === "AGGREGATE") return computeMetric(aggregate, definition);
-  const groups = new Map<string, FactRow[]>();
-  for (const fact of selected) {
-    const key = entityId(fact);
-    const existing = groups.get(key);
-    if (existing) {
-      existing.push(fact);
-    } else {
-      groups.set(key, [fact]);
-    }
-  }
-  return median([...groups.values()]
-    .map((rows) => computeMetric(sumFacts(rows), definition))
-    .filter((value): value is number => value !== null));
+  return buildCohortModel(facts, scope, definition, asOfDate).benchmark;
 }
 
 export function computeCohortWeightedAchievement(
@@ -321,7 +442,7 @@ export function computeCohortWeightedAchievement(
 ): number | null {
   const configWindows = resolvedWindows(scope.windows);
   const included = configWindows.filter((window) => window.includeInScore && window.weight > 0);
-  return weightedGeometricMean(
+  return blendWindowScores(
     included.map((window) => {
       const evidence = entity.windows[window.id];
       const achievementValue = evidence?.eligible
@@ -333,55 +454,29 @@ export function computeCohortWeightedAchievement(
         required: window.required
       };
     }),
-    scope.achievementCap
+    scope.achievementCap,
+    scope.windowBlendMethod
   );
 }
 
 export function attachCohortEvidence(
   planEvidence: EntityEvidence[],
-  cohortEvidence: EntityEvidence[],
-  benchmark: number | null
-): EntityEvidence[];
-export function attachCohortEvidence(
-  planEvidence: EntityEvidence[],
-  benchmark: number | null,
+  cohort: CohortModel,
   scope: OptimizationScope,
   definition: MetricDefinition
-): EntityEvidence[];
-export function attachCohortEvidence(
-  planEvidence: EntityEvidence[],
-  cohortEvidenceOrBenchmark: EntityEvidence[] | number | null,
-  benchmarkOrScope?: number | null | OptimizationScope,
-  scopeOrDefinition?: MetricDefinition
 ): EntityEvidence[] {
-  if (Array.isArray(cohortEvidenceOrBenchmark)) {
-    const cohortEvidence = cohortEvidenceOrBenchmark;
-    const benchmark = benchmarkOrScope as number | null;
-    const scores = new Map(cohortEvidence.map((item) => [`${item.entityLevel}|${item.entityId}`, item.weightedAchievement]));
-    return planEvidence.map((item) => ({
+  return planEvidence.map((item) => {
+    const benchmark = cohort.benchmarkFor(item.entityId);
+    return {
       ...item,
-      cohortWeightedAchievement: scores.get(`${item.entityLevel}|${item.entityId}`) ?? null,
-      cohortBenchmark: benchmark
-    }));
-  }
-
-  const benchmark = cohortEvidenceOrBenchmark;
-  const scope = benchmarkOrScope as OptimizationScope | undefined;
-  const definition = scopeOrDefinition;
-
-  if (benchmark === null || !scope || !definition) {
-    return planEvidence.map((item) => ({
-      ...item,
-      cohortWeightedAchievement: null,
-      cohortBenchmark: benchmark
-    }));
-  }
-
-  return planEvidence.map((item) => ({
-    ...item,
-    cohortWeightedAchievement: computeCohortWeightedAchievement(item, benchmark, scope, definition),
-    cohortBenchmark: benchmark
-  }));
+      cohortWeightedAchievement: benchmark === null
+        ? null
+        : computeCohortWeightedAchievement(item, benchmark, scope, definition),
+      cohortBenchmark: benchmark,
+      cohortRank: cohort.rankFor(item.entityId),
+      cohortSize: cohort.size
+    };
+  });
 }
 
 export function contextEvidence(entity: EntityEvidence, all: EntityEvidence[]): EntityEvidence | null {
@@ -394,6 +489,59 @@ export function contextEvidence(entity: EntityEvidence, all: EntityEvidence[]): 
     ?? null;
 }
 
+/**
+ * The aggregate an entity is blended against in the second weighting layer.
+ *
+ * PROJECT mirrors the reference spreadsheet's "Total" column. PARENT compares a
+ * child to the container the buyer actually manages, which keeps a healthy ad
+ * from being dragged down by unrelated campaigns.
+ */
+export function contextAchievementFor(
+  entity: EntityEvidence,
+  all: EntityEvidence[],
+  scope: OptimizationScope
+): number | null {
+  if (scope.contextSource === "PROJECT") return entity.projectWeightedAchievement;
+  return contextEvidence(entity, all)?.weightedAchievement ?? entity.projectWeightedAchievement;
+}
+
 export function contextGeometricAchievement(entity: EntityEvidence, all: EntityEvidence[]): number | null {
   return contextEvidence(entity, all)?.weightedAchievement ?? entity.projectWeightedAchievement;
+}
+
+/**
+ * Second weighting layer: entity score blended with its context score.
+ *
+ * This is the layer the reference spreadsheet calls "Ads 60% / Total 40%". It
+ * was configurable in the UI but never read by the engine, so the setting had
+ * no effect until now. With context weight 0 the blend returns the entity score
+ * unchanged, so projects that do not want it are unaffected.
+ */
+export function blendedAchievementFor(
+  entity: EntityEvidence,
+  all: EntityEvidence[],
+  config: ProjectConfig,
+  scope: OptimizationScope
+): { blended: number | null; context: number | null } {
+  const context = contextAchievementFor(entity, all, scope);
+  const weights = config.contextWeights[entity.entityLevel];
+  if (entity.weightedAchievement === null) return { blended: null, context };
+  if (context === null || weights.context <= 0) return { blended: entity.weightedAchievement, context };
+  const totalWeight = weights.entity + weights.context;
+  if (totalWeight <= 0) return { blended: entity.weightedAchievement, context };
+  return {
+    blended: (entity.weightedAchievement * weights.entity + context * weights.context) / totalWeight,
+    context
+  };
+}
+
+export function attachContextEvidence(
+  evidence: EntityEvidence[],
+  config: ProjectConfig,
+  scope: OptimizationScope
+): EntityEvidence[] {
+  return evidence.map((item) => {
+    const { blended, context } = blendedAchievementFor(item, evidence, config, scope);
+    return { ...item, blendedAchievement: blended, contextAchievement: context };
+  });
 }

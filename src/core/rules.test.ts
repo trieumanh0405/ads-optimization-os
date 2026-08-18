@@ -22,10 +22,11 @@ const evidence = (level: "CAMPAIGN" | "ADSET" | "AD", budgetType: "CBO" | "ABO" 
   },
   scopeId: "default-pfm", scopeName: "Lead",
   weightedAchievement: 1, minimumWindowAchievement: 1, trendRatio: 1, redFlagWindowIds: [],
-  projectWeightedAchievement: 1, cohortWeightedAchievement: 1, cohortBenchmark: 100
+  projectWeightedAchievement: 1, cohortWeightedAchievement: 1, cohortBenchmark: 100,
+  cohortRank: 1, cohortSize: 5, contextAchievement: 1, blendedAchievement: 1
 });
 const config: ProjectConfig = {
-  projectId: "P", projectName: "P", platform: "META", accountId: "act_1", timezone: "Asia/Bangkok", currency: "VND", startDate: "2026-07-01",
+  projectId: "P", projectName: "P", platform: "META", accountId: "act_1", timezone: "Asia/Bangkok", currency: "VND", startDate: "2026-07-01", planEndDate: null,
   primaryMetricKey: "CPL", optimizationEventLabel: "Lead", salesModel: "ONLINE_CHECKOUT", trackingConfidence: "HIGH", capiStatus: "UNKNOWN",
   target: 100, ruleSetId: "R", ruleVersion: 1, dataFreshnessHours: 6,
   windows: [
@@ -39,10 +40,12 @@ const config: ProjectConfig = {
 };
 const scope: OptimizationScope = {
   scopeId: "default-pfm", name: "Lead", enabled: true, primaryMetricKey: "CPL",
-  optimizationEventLabel: "Lead", planTarget: 100, ruleSetId: "R", ruleVersion: 1,
+  optimizationEventLabel: "Lead", planTarget: 100, planTargetResults: null, estimateRate: null, ruleSetId: "R", ruleVersion: 1,
   windows: config.windows, achievementCap: 2, scaleMinWindowAchievement: 1,
-  contextScaleMinAchievement: 1,
-  cohortBenchmark: { enabled: true, lookbackDays: 14, minEntities: 3, minResults: 5, method: "AGGREGATE", manualValue: null },
+  contextScaleMinAchievement: 1, windowBlendMethod: "ARITHMETIC", contextSource: "PROJECT",
+  cohortGuard: { enabled: true, minPlanAchievement: 0, minCohortAchievement: 1 },
+  methodologyVersion: 2,
+  cohortBenchmark: { enabled: true, lookbackDays: 14, minEntities: 3, minResults: 5, method: "AGGREGATE", excludeSelf: true, manualValue: null },
   fallbackClassification: "PFM_INCLUDED"
 };
 const metric = { key: "CPL", label: "CPL", kind: "RATIO", numerator: "spend", denominator: "result", multiplier: 1, direction: "LOWER_IS_BETTER", nullWhenDenominatorZero: true } as const;
@@ -73,9 +76,15 @@ describe("rule guardrails", () => {
     expect(output.recommendedAction).toBe("REVIEW_MANUALLY");
     expect(output.reasonCodes).toContain("CONFLICTING_RULES");
   });
-  it("raises manual review when one configured window breaches its red-flag floor", () => {
+  it("reports a red-flag window without downgrading an otherwise healthy KEEP", () => {
     const item = { ...evidence("ADSET", "ABO"), redFlagWindowIds: ["TODAY"] };
     const output = evaluateEntity(item, [item], [rule("KEEP", "KEEP")], config, metric, scope);
+    expect(output.recommendedAction).toBe("KEEP");
+    expect(output.reasonCodes).toContain("WINDOW_RED_FLAG_TODAY");
+  });
+  it("still blocks scaling while a window is red-flagged", () => {
+    const item = { ...evidence("ADSET", "ABO"), redFlagWindowIds: ["TODAY"] };
+    const output = evaluateEntity(item, [item], [rule("SCALE", "INCREASE_BUDGET")], config, metric, scope);
     expect(output.recommendedAction).toBe("REVIEW_MANUALLY");
     expect(output.reasonCodes).toContain("WINDOW_RED_FLAG_TODAY");
   });
@@ -83,6 +92,8 @@ describe("rule guardrails", () => {
     const item = {
       ...evidence("ADSET", "ABO"),
       weightedAchievement: 1.2,
+      blendedAchievement: 1.2,
+      contextAchievement: 0.5,
       projectWeightedAchievement: 0.5
     };
     const legacyRule = {
@@ -116,8 +127,8 @@ describe("applyCrossEntityGuardrails", () => {
       recommendedAction: action, adjustmentPct: 0.2, reasonCodes: ["SCALE_RULE"],
       matchedRuleIds: ["r1"], evidenceWindow: "SHORT", currentMetric: 50,
       evaluatedValue: 1.2, targetMetric: 100, weightedAchievement: 1.2,
-      contextWeightedAchievement: 1.2, cohortWeightedAchievement: null,
-      cohortBenchmark: null, minimumWindowAchievement: 1.0, trendRatio: 1.0,
+      contextWeightedAchievement: 1.2, blendedAchievement: 1.2, cohortWeightedAchievement: null,
+      cohortBenchmark: null, cohortRank: null, cohortSize: null, minimumWindowAchievement: 1.0, trendRatio: 1.0,
       redFlagWindowIds: [], confidence, executionPhase: 2, windowMetrics: []
     });
 
@@ -147,8 +158,8 @@ describe("applyCrossEntityGuardrails", () => {
       recommendedAction: "KEEP", adjustmentPct: null, reasonCodes: [],
       matchedRuleIds: [], evidenceWindow: "SHORT", currentMetric: 50,
       evaluatedValue: 1.2, targetMetric: 100, weightedAchievement: 1.2,
-      contextWeightedAchievement: 1.2, cohortWeightedAchievement: null,
-      cohortBenchmark: null, minimumWindowAchievement: 1.0, trendRatio: 1.0,
+      contextWeightedAchievement: 1.2, blendedAchievement: 1.2, cohortWeightedAchievement: null,
+      cohortBenchmark: null, cohortRank: null, cohortSize: null, minimumWindowAchievement: 1.0, trendRatio: 1.0,
       redFlagWindowIds: [], confidence: 0.8, executionPhase: phase, windowMetrics: []
     });
     const original = [makeRec("as2", 2), makeRec("as1", 1)];

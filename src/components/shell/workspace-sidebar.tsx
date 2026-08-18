@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  BrainCircuit, ChevronDown, ClipboardCheck, Cloud, CloudOff, Database, Gauge, History,
+  BrainCircuit, ChevronDown, Cloud, CloudOff, Database, Gauge, History,
   LayoutDashboard, Settings2, SlidersHorizontal, X
 } from "lucide-react";
 import type { LocalProject, WorkspaceView } from "@/product/types";
@@ -22,19 +22,20 @@ export type WorkspaceSidebarProps = {
 
 export const WORKSPACE_VIEW_LABELS: Record<WorkspaceView, { label: string; description: string }> = {
   OVERVIEW: { label: "Tổng quan", description: "Tình trạng project và bước vận hành tiếp theo" },
+  OPERATIONS: {
+    label: "Điều hành",
+    description: "Kế hoạch, đề xuất và thực thi trên cùng một màn hình"
+  },
   PROJECT_SETUP: { label: "Project & KPI", description: "Metric chính, target, lookback và guardrail" },
   DATA_IMPORT: { label: "Data import", description: "Đưa raw data thật vào data contract" },
   RULES: { label: "Rule engine", description: "Thiết lập điều kiện tắt, giữ và tăng đầu tư" },
-  DECISIONS: { label: "Decision board", description: "Chạy engine và xem đề xuất theo Campaign · Ad set · Ad" },
-  ACTIONS: { label: "Action queue", description: "Duyệt, thực hiện và lưu lịch sử action" },
   AI: { label: "AI diagnostics", description: "Phân tích supporting metrics bằng nhiều model/playbook" },
   RUNS: { label: "Runs & audit", description: "QC, import, run và action log" }
 };
 
 export const OPERATOR_NAV_ITEMS: Array<{ id: WorkspaceView; icon: typeof LayoutDashboard }> = [
   { id: "OVERVIEW", icon: LayoutDashboard },
-  { id: "DECISIONS", icon: Gauge },
-  { id: "ACTIONS", icon: ClipboardCheck },
+  { id: "OPERATIONS", icon: Gauge },
   { id: "AI", icon: BrainCircuit }
 ];
 
@@ -77,7 +78,7 @@ export function WorkspaceSidebar({
       >
         <Icon size={18} />
         <span>{WORKSPACE_VIEW_LABELS[item.id].label}</span>
-        {item.id === "ACTIONS" && pendingCount > 0 && <b>{pendingCount}</b>}
+        {item.id === "OPERATIONS" && pendingCount > 0 && <b>{pendingCount}</b>}
       </button>
     );
   }
