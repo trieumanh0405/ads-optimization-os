@@ -6,6 +6,7 @@ import type { ScopeSummary } from "@/core/pacing";
 import type { ProjectConfig } from "@/core/schemas";
 import { formatNumber } from "../helpers/format-utils";
 import { achievementBand, formatCount, formatPercent } from "../helpers/reason-labels";
+import { NotchMeter } from "../helpers/meters";
 
 export type PlanOverviewProps = {
   summary: ScopeSummary;
@@ -22,15 +23,16 @@ const BANDS = [
   { min: 0, max: 0.8, label: "Tắt", tone: "off" }
 ] as const;
 
-/** A number the operator reads at a glance, with its unit and one line of context. */
-function Pulse({
-  label, value, sub, tone, wide
-}: { label: string; value: string; sub?: string; tone?: string; wide?: boolean }) {
+/** One figure in the masthead: a number large enough to read across a desk. */
+function Figure({
+  label, value, sub, tone, meter
+}: { label: string; value: string; sub?: string; tone?: string; meter?: number | null }) {
   return (
-    <div className={`pulse${tone ? ` band-${tone}` : ""}${wide ? " wide" : ""}`}>
-      <span className="pulseLabel">{label}</span>
-      <strong className="pulseValue">{value}</strong>
-      {sub && <span className="pulseSub">{sub}</span>}
+    <div className={`figure${tone ? ` band-${tone}` : ""}`}>
+      <span className="figureLabel">{label}</span>
+      <strong className="figureValue">{value}</strong>
+      {meter !== undefined && <NotchMeter value={meter} size="lead" />}
+      {sub && <span className="figureSub">{sub}</span>}
     </div>
   );
 }
@@ -62,50 +64,53 @@ export function PlanOverview({
   const planConfigured = pacing.planEndDate !== null && plan.targetQualifiedResults !== null;
 
   return (
-    <section className="planPanel">
-      <div className="planPulseRow">
-        <div className="planIdentity">
-          <span className="planScopeName">{summary.scopeName}</span>
-          <small>{summary.metricKey} · {summary.entityCount.toLocaleString("vi-VN")} entity</small>
+    <section className="scopeMasthead">
+      <div className="mastheadHead">
+        <div className="mastheadIdentity">
+          <span className="mastheadKicker">Nhóm KPI</span>
+          <h2>{summary.scopeName}</h2>
+          <small>
+            {summary.metricKey} · {summary.entityCount.toLocaleString("vi-VN")} entity ·
+            {" "}mục tiêu {money(plan.targetCostPerReportedResult)} / {summary.optimizationEventLabel}
+          </small>
         </div>
-
-        <Pulse label="Đã tiêu" value={money(summary.spend)} />
-        <Pulse
-          label="Chi phí / result"
-          value={money(actual.costPerReportedResult)}
-          sub={`mục tiêu ${money(plan.targetCostPerReportedResult)}`}
-        />
-        <Pulse
-          label="So với target"
-          value={formatPercent(summary.achievement)}
-          tone={band}
-          sub={`${formatCount(actual.reportedResults, 0)} ${summary.optimizationEventLabel}`}
-        />
-        {planConfigured && (
-          <Pulse
-            label="Tiến độ sản lượng"
-            value={formatPercent(pacing.resultProgress)}
-            sub={pacing.timeProgress === null ? undefined : `thời gian đã trôi ${formatPercent(pacing.timeProgress)}`}
-            tone={pacing.paceIndex !== null && pacing.paceIndex < 1 ? "off" : "keep"}
-          />
-        )}
-        {planConfigured && budgetGap !== null && (
-          <Pulse
-            label={budgetGap < 0 ? "Có thể giảm mỗi ngày" : "Cần đẩy thêm mỗi ngày"}
-            value={money(Math.abs(budgetGap))}
-            sub={`đang chạy ${money(pacing.currentDailySpend)}`}
-            wide
-          />
-        )}
-
-        <button
-          className="planToggle"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-        >
+        <button className="mastheadToggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
           {open ? "Thu gọn" : "Chi tiết"}
           <ChevronDown size={15} className={open ? "flipped" : ""} />
         </button>
+      </div>
+
+      <div className="mastheadFigures">
+        <Figure label="Đã tiêu" value={money(summary.spend)} sub={`${config.startDate} → nay`} />
+        <Figure
+          label={`Chi phí / ${summary.optimizationEventLabel}`}
+          value={money(actual.costPerReportedResult)}
+          sub={`${formatCount(actual.reportedResults, 0)} ${summary.optimizationEventLabel} nền tảng báo`}
+        />
+        <Figure
+          label="So với target"
+          value={formatPercent(summary.achievement)}
+          tone={band}
+          meter={summary.achievement}
+          sub="vạch đứng là mốc 100%"
+        />
+        {planConfigured && (
+          <Figure
+            label="Tiến độ sản lượng"
+            value={formatPercent(pacing.resultProgress)}
+            tone={pacing.paceIndex !== null && pacing.paceIndex < 1 ? "off" : "keep"}
+            sub={pacing.timeProgress === null
+              ? undefined
+              : `thời gian đã trôi ${formatPercent(pacing.timeProgress)} · còn ${pacing.remainingDays} ngày`}
+          />
+        )}
+        {planConfigured && budgetGap !== null && (
+          <Figure
+            label={budgetGap < 0 ? "Có thể giảm mỗi ngày" : "Cần đẩy thêm mỗi ngày"}
+            value={money(Math.abs(budgetGap))}
+            sub={`đang chạy ${money(pacing.currentDailySpend)} / ngày`}
+          />
+        )}
       </div>
 
       {(targetUnreachable || thresholdDistorted) && (
@@ -115,7 +120,7 @@ export function PlanOverview({
               <AlertTriangle size={15} />
               <span>
                 Nhóm <b>{summary.scopeName}</b> đang ở <b>{formatPercent(summary.achievement)}</b> so với target,
-                nên phần lớn entity sẽ rơi vào dải tắt. Cân nhắc xem lại target hoặc offer trước khi tắt hàng loạt.
+                nên phần lớn entity sẽ rơi vào dải tắt. Xem lại target hoặc offer trước khi tắt hàng loạt.
               </span>
             </p>
           )}

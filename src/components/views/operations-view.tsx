@@ -21,6 +21,8 @@ import type { TeamApi } from "@/product/team-api";
 import type { LocalProject, OptimizationRun } from "@/product/types";
 import { actionLabel, formatNumber, latestRun } from "../helpers/format-utils";
 import { achievementBand, formatCount, formatPercent, reasonSentence } from "../helpers/reason-labels";
+import { causeLabel, readEvidence } from "../helpers/diagnostics";
+import { NotchMeter, WindowTrail } from "../helpers/meters";
 import { PlanOverview } from "./plan-overview";
 import type { RecommendationView, SourceSyncResponse } from "./decision-types";
 
@@ -55,7 +57,7 @@ const CHIPS: Array<{
   { id: "BUDGET", label: "Đổi ngân sách", hint: "cấp giữ ngân sách", tone: "scale", icon: CircleDollarSign },
   { id: "KEEP", label: "Giữ nguyên", hint: "đang đạt ngưỡng", tone: "keep", icon: CheckCircle2 },
   { id: "REVIEW_MANUALLY", label: "Review tay", hint: "engine không tự quyết", tone: "watch", icon: AlertTriangle },
-  { id: "PENDING_DATA", label: "Chưa đủ dữ liệu", hint: "chờ thêm bằng chứng", tone: "idle", icon: Hourglass }
+  { id: "PENDING_DATA", label: "Chưa đủ dữ liệu", hint: "chưa kết luận được", tone: "idle", icon: Hourglass }
 ];
 
 export function OperationsView({
@@ -160,6 +162,37 @@ export function OperationsView({
 
   const chipCount = (chip: ActionFilter) => scopeRows.filter((row) => matchesChip(row, chip)).length;
   const todoCount = scopeRows.filter((row) => needsAction(row) && !row.settled).length;
+
+  // An entity that spent money and returned zero of the metric being scored is
+  // not thin data — it is the wrong metric. That distinction decides whether
+  // "Cần tắt" is a real instruction or a false alarm, so it goes above the table.
+  const evidenceByEntity = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof readEvidence>>();
+    scopeRows.forEach((row) => {
+      map.set(
+        entityKey(row.decision.scopeId, row.decision.entityLevel, row.decision.entityId),
+        readEvidence(row.decision.windowMetrics)
+      );
+    });
+    return map;
+  }, [scopeRows]);
+
+  const evidenceOf = (decision: RecommendationView) =>
+    evidenceByEntity.get(entityKey(decision.scopeId, decision.entityLevel, decision.entityId));
+
+  const blindSpots = useMemo(() => {
+    const hits = scopeRows.filter(
+      (row) => evidenceOf(row.decision)?.cause === "SPENT_NO_RESULT"
+    );
+    return {
+      count: hits.length,
+      spend: hits.reduce((total, row) => total + (evidenceOf(row.decision)?.spend ?? 0), 0),
+      turnOff: hits.filter((row) => row.decision.recommendedAction === "TURN_OFF").length
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeRows, evidenceByEntity]);
+
+  const eventLabel = summaries[0]?.optimizationEventLabel ?? project.config.optimizationEventLabel;
 
   // Repeating one target on 998 rows is noise, but scopes can have different
   // targets, so it only belongs in the header when every visible row shares it.
@@ -322,27 +355,50 @@ export function OperationsView({
         );
       })}
 
-      <section className="chipRow" role="group" aria-label="Lọc theo đề xuất">
-        {CHIPS.map((chip) => {
-          const Icon = chip.icon;
-          const active = actionFilter === chip.id;
-          return (
-            <button
-              key={chip.id}
-              className={`decisionChip band-${chip.tone}${active ? " active" : ""}`}
-              aria-pressed={active}
-              onClick={() => { setActionFilter(active ? "ALL" : chip.id); setPage(1); }}
-            >
-              <Icon size={17} />
-              <strong>{chipCount(chip.id).toLocaleString("vi-VN")}</strong>
-              <span>{chip.label}</span>
-              <small>{chip.hint}</small>
-            </button>
-          );
-        })}
-      </section>
+      {blindSpots.count > 0 && (
+        <section className="blindSpot">
+          <AlertTriangle size={18} />
+          <div>
+            <strong>
+              {blindSpots.count.toLocaleString("vi-VN")} dòng đã tiêu {money(blindSpots.spend)} mà
+              chưa ra {eventLabel} nào
+            </strong>
+            <p>
+              Nếu những dòng này đang chạy objective khác thì tool đang chấm chúng bằng sai thước đo
+              {blindSpots.turnOff > 0 && <>, và {blindSpots.turnOff.toLocaleString("vi-VN")} đề xuất tắt trong số đó không đáng tin</>}.
+              Tách mỗi objective thành một nhóm KPI riêng trong Project &amp; KPI trước khi tắt.
+            </p>
+          </div>
+          <button
+            className="secondaryAction small"
+            onClick={() => { setActionFilter("ALL"); setSearch(""); setPage(1); }}
+          >
+            Xem tất cả
+          </button>
+        </section>
+      )}
 
       <section className="sectionCard tableCard">
+        <div className="chipRow" role="group" aria-label="Lọc theo đề xuất">
+          {CHIPS.map((chip) => {
+            const Icon = chip.icon;
+            const active = actionFilter === chip.id;
+            return (
+              <button
+                key={chip.id}
+                className={`decisionChip band-${chip.tone}${active ? " active" : ""}`}
+                aria-pressed={active}
+                onClick={() => { setActionFilter(active ? "ALL" : chip.id); setPage(1); }}
+              >
+                <Icon size={15} />
+                <strong>{chipCount(chip.id).toLocaleString("vi-VN")}</strong>
+                <span>{chip.label}</span>
+                <small>{chip.hint}</small>
+              </button>
+            );
+          })}
+        </div>
+
         <div className="tableHead">
           <div className="tableHeadTitle">
             <h2>Bảng điều hành</h2>
@@ -420,7 +476,8 @@ export function OperationsView({
                 <tr>
                   <th>Entity</th>
                   <th className="numeric">KPI hôm nay</th>
-                  <th className="scoreCol">Điểm đạt target</th>
+                  <th className="trailCol">Xu hướng</th>
+                  <th className="scoreCol">Đạt target</th>
                   <th>Đề xuất</th>
                   <th>Xử lý</th>
                 </tr>
@@ -433,6 +490,8 @@ export function OperationsView({
                   // The band rule is already legible from the score and the action
                   // pill, so only an override earns a line of prose.
                   const overrides = decision.reasonCodes.filter((code) => !code.startsWith("RULE_"));
+                  const evidence = evidenceOf(decision);
+                  const blind = evidence?.cause === "SPENT_NO_RESULT";
                   return (
                     <tr
                       key={entityKey(decision.scopeId, decision.entityLevel, decision.entityId)}
@@ -450,15 +509,31 @@ export function OperationsView({
                             multiScope ? decision.scopeName : null
                           ].filter(Boolean).join(" · ")}
                         </small>
+                        {blind && (
+                          <em className="evidenceNote">
+                            {causeLabel("SPENT_NO_RESULT", eventLabel)} — kiểm tra objective
+                          </em>
+                        )}
+                        {!blind && evidence && evidence.cause !== "HEALTHY"
+                          && decision.recommendedAction === "PENDING_DATA" && (
+                          <em className="evidenceNote muted">{causeLabel(evidence.cause, eventLabel)}</em>
+                        )}
                         {overrides.length > 0 && <em className="overrideNote">{reasonSentence(overrides)}</em>}
                       </td>
                       <td className="numeric mono">{money(decision.currentMetric)}</td>
+                      <td className="trailCol">
+                        <WindowTrail
+                          windows={(decision.windowMetrics ?? []).map((window) => ({
+                            id: window.id,
+                            label: `${window.label}: ${formatPercent(window.achievement)}`,
+                            achievement: window.achievement,
+                            includeInScore: window.includeInScore
+                          }))}
+                        />
+                      </td>
                       <td className="scoreCol">
                         <span className={`scoreValue band-${band}`}>{formatPercent(score)}</span>
-                        <span className="scoreMeter" aria-hidden="true">
-                          <i className={`band-${band}`} style={{ width: `${Math.min(100, Math.max(0, (score ?? 0) / 1.5 * 100))}%` }} />
-                          <u />
-                        </span>
+                        <NotchMeter value={score} />
                       </td>
                       <td>
                         <span className={`actionPill action-${decision.recommendedAction.toLowerCase()}`}>
@@ -525,6 +600,17 @@ export function OperationsView({
               <p>{reasonSentence(selected.reasonCodes)}</p>
             </div>
 
+            {evidenceOf(selected)?.cause === "SPENT_NO_RESULT" && (
+              <p className="drawerDiagnosis">
+                <AlertTriangle size={15} />
+                <span>
+                  Entity này đã tiêu <b>{money(evidenceOf(selected)?.spend ?? 0)}</b> mà chưa ra
+                  {" "}{eventLabel} nào. Kiểm tra objective của nó trước khi làm theo đề xuất —
+                  nếu nó chạy objective khác thì đây là sai thước đo, không phải quảng cáo kém.
+                </span>
+              </p>
+            )}
+
             {selectedRow?.action && (
               <div className="drawerActionBar">
                 <label className="modalTextarea">
@@ -544,30 +630,39 @@ export function OperationsView({
               </div>
             )}
 
+            {/* A row of "N/A" teaches nothing and buries the numbers that do
+                decide the call, so a measure that has no value is not shown. */}
             <dl className="evidenceList">
-              <div><dt>KPI hôm nay</dt><dd>{money(selected.currentMetric)}</dd></div>
-              <div><dt>Target</dt><dd>{money(selected.targetMetric)}</dd></div>
-              <div className="strong">
-                <dt>Điểm gộp (dùng để quyết định)</dt>
-                <dd>{formatPercent(selected.blendedAchievement ?? selected.weightedAchievement)}</dd>
-              </div>
-              <div><dt>Điểm riêng entity</dt><dd>{formatPercent(selected.weightedAchievement)}</dd></div>
-              <div><dt>Điểm nhóm cấp trên</dt><dd>{formatPercent(selected.contextWeightedAchievement)}</dd></div>
-              <div>
-                <dt>Hạng trong tài khoản</dt>
-                <dd>
-                  {selected.cohortRank && selected.cohortSize
-                    ? `${selected.cohortRank}/${selected.cohortSize} · mặt bằng ${money(selected.cohortBenchmark)}`
-                    : "N/A"}
-                </dd>
-              </div>
-              <div><dt>Cửa sổ yếu nhất</dt><dd>{formatPercent(selected.minimumWindowAchievement)}</dd></div>
-              <div><dt>Xu hướng gần đây</dt><dd>{formatPercent(selected.trendRatio)}</dd></div>
-              <div><dt>Độ dày dữ liệu</dt><dd>{formatPercent(selected.confidence)}</dd></div>
-              {selected.entityLevel !== "AD" && (
-                <div><dt>Loại ngân sách</dt><dd>{selected.budgetType}</dd></div>
-              )}
-              <div><dt>Trạng thái entity</dt><dd>{selected.currentStatus}</dd></div>
+              {([
+                ["KPI hôm nay", money(selected.currentMetric), selected.currentMetric !== null, false],
+                ["Target", money(selected.targetMetric), true, false],
+                [
+                  "Điểm gộp (dùng để quyết định)",
+                  formatPercent(selected.blendedAchievement ?? selected.weightedAchievement),
+                  (selected.blendedAchievement ?? selected.weightedAchievement) !== null,
+                  true
+                ],
+                ["Điểm riêng entity", formatPercent(selected.weightedAchievement), selected.weightedAchievement !== null, false],
+                ["Điểm nhóm cấp trên", formatPercent(selected.contextWeightedAchievement), selected.contextWeightedAchievement !== null, false],
+                [
+                  "Hạng trong tài khoản",
+                  `${selected.cohortRank}/${selected.cohortSize} · mặt bằng ${money(selected.cohortBenchmark)}`,
+                  Boolean(selected.cohortRank && selected.cohortSize),
+                  false
+                ],
+                ["Cửa sổ yếu nhất", formatPercent(selected.minimumWindowAchievement), selected.minimumWindowAchievement !== null, false],
+                ["Xu hướng gần đây", formatPercent(selected.trendRatio), selected.trendRatio !== null, false],
+                ["Độ dày dữ liệu", formatPercent(selected.confidence), true, false],
+                ["Loại ngân sách", selected.budgetType, selected.entityLevel !== "AD", false],
+                ["Trạng thái entity", selected.currentStatus, true, false]
+              ] as Array<[string, string, boolean, boolean]>)
+                .filter(([, , show]) => show)
+                .map(([label, value, , strong]) => (
+                  <div key={label} className={strong ? "strong" : undefined}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
             </dl>
 
             {selected.windowMetrics && selected.windowMetrics.length > 0 && (
