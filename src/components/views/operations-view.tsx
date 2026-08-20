@@ -23,7 +23,8 @@ import { actionLabel, formatNumber, latestRun } from "../helpers/format-utils";
 import { achievementBand, formatCount, formatPercent, reasonSentence } from "../helpers/reason-labels";
 import { causeLabel, readEvidence } from "../helpers/diagnostics";
 import { NotchMeter, WindowTrail } from "../helpers/meters";
-import { PlanOverview } from "./plan-overview";
+import { PlanOverview, type ThresholdBand } from "./plan-overview";
+import { levelSettingsFor } from "@/core/scopes";
 import type { RecommendationView, SourceSyncResponse } from "./decision-types";
 
 export type OperationsViewProps = {
@@ -202,6 +203,32 @@ export function OperationsView({
   const money = (value: number | null | undefined) =>
     formatNumber(value ?? null, isMoneyMetric ? project.config.currency : undefined);
 
+  /**
+   * The thresholds a rule set really applies, read from the stored rules rather
+   * than restated in the UI. A hardcoded legend drifts the moment someone edits
+   * a rule, and then the screen argues with the engine.
+   */
+  const bandsFor = (ruleSetId: string | undefined): ThresholdBand[] => {
+    const toneOf = (action: ActionRecord["recommendedAction"]) =>
+      action === "TURN_OFF" ? "off"
+        : action === "DECREASE_BUDGET" ? "watch"
+          : action === "INCREASE_BUDGET" ? "scale"
+            : action === "KEEP" ? "keep" : "unknown";
+    return project.rules
+      .filter((rule) => rule.enabled
+        && rule.entityLevel === "AD"
+        && rule.evaluationField === "ACHIEVEMENT"
+        && (!ruleSetId || rule.ruleSetId === ruleSetId))
+      .map((rule) => ({
+        min: rule.thresholdFrom,
+        max: rule.thresholdTo,
+        label: actionLabel(rule.actionCode)
+          + (rule.actionValue ? ` ${rule.actionValue > 0 ? "+" : ""}${Math.round(rule.actionValue * 100)}%` : ""),
+        tone: toneOf(rule.actionCode)
+      }))
+      .sort((a, b) => b.min - a.min);
+  };
+
   async function refreshSource() {
     if (!onSync) return;
     setSyncing(true);
@@ -339,18 +366,22 @@ export function OperationsView({
 
       {summaries.map((summary) => {
         const scope = project.config.optimizationScopes.find((item) => item.scopeId === summary.scopeId);
+        // The panel describes what an operator acts on, which is the ad level.
+        const adSettings = scope ? levelSettingsFor(scope, project.config, "AD") : null;
         return (
           <PlanOverview
             key={summary.scopeId}
             summary={summary}
             config={project.config}
-            contextWeights={project.config.contextWeights.AD}
-            contextSource={scope?.contextSource ?? "PARENT"}
-            windowWeights={(scope?.windows ?? project.config.windows).map((window) => ({
+            contextWeights={adSettings?.contextWeights ?? project.config.contextWeights.AD}
+            contextSource={adSettings?.contextSource ?? "PARENT"}
+            windowWeights={(adSettings?.windows ?? scope?.windows ?? project.config.windows).map((window) => ({
               id: window.id,
               label: window.label ?? window.id,
               weight: window.includeInScore ? window.weight : 0
             }))}
+            bands={bandsFor(scope?.ruleSetId)}
+            bandLevelLabel="Ad"
           />
         );
       })}

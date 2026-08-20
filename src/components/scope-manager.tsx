@@ -4,10 +4,11 @@ import { useMemo, useState } from "react";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import type {
   ClassificationRule,
+  EntityLevel,
   OptimizationScope,
   WindowConfig
 } from "@/core/schemas";
-import { legacyScope, resolvedScopes } from "@/core/scopes";
+import { legacyScope, levelSettingsFor, resolvedScopes } from "@/core/scopes";
 import { buildDefaultRules, slugify } from "@/product/defaults";
 import type { LocalProject } from "@/product/types";
 
@@ -26,6 +27,10 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
     ? project.config.optimizationScopes
     : [legacyScope(project.config)];
   const [selectedScopeId, setSelectedScopeId] = useState(initialScopes[0]?.scopeId ?? "");
+  // "SHARED" edits the scope's own settings, which every level inherits until it
+  // is given its own. A buyer turns an ad off on the ad's own evidence and moves
+  // an ad set's budget on a slower read, so the levels need separate dials.
+  const [levelTab, setLevelTab] = useState<"SHARED" | EntityLevel>("SHARED");
   const scopes = resolvedScopes({
     ...project.config,
     optimizationScopes: project.config.optimizationScopes.length ? project.config.optimizationScopes : initialScopes
@@ -100,17 +105,58 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
     setSelectedScopeId(next[0].scopeId);
   }
 
+  const LEVEL_LABELS: Record<EntityLevel, string> = { CAMPAIGN: "Campaign", ADSET: "Ad set", AD: "Ad" };
+  const activeLevel = levelTab === "SHARED" ? null : levelTab;
+  const levelOverride = activeLevel ? selected?.levelSettings?.[activeLevel] : undefined;
+  const levelHasOwnWindows = Boolean(levelOverride?.windows);
+  /** What the tab in view actually edits: the level's own windows, or the shared set. */
+  const editedWindows: WindowConfig[] = levelOverride?.windows ?? selected?.windows ?? [];
+  const effectiveLevel = selected && activeLevel
+    ? levelSettingsFor(selected, project.config, activeLevel)
+    : null;
+
+  function patchLevel(level: EntityLevel, patch: Partial<NonNullable<OptimizationScope["levelSettings"][EntityLevel]>>) {
+    if (!selected) return;
+    const current = selected.levelSettings?.[level]
+      ?? { windows: null, contextWeights: null, windowBlendMethod: null, contextSource: null };
+    patchScope({ levelSettings: { ...selected.levelSettings, [level]: { ...current, ...patch } } });
+  }
+
+  function setEditedWindows(next: WindowConfig[]) {
+    if (!selected) return;
+    if (activeLevel && levelHasOwnWindows) return patchLevel(activeLevel, { windows: next });
+    patchScope({ windows: next });
+  }
+
+  function splitLevel(level: EntityLevel) {
+    if (!selected) return;
+    patchLevel(level, {
+      windows: structuredClone(selected.windows),
+      contextWeights: { ...project.config.contextWeights[level] },
+      windowBlendMethod: selected.windowBlendMethod,
+      contextSource: selected.contextSource
+    });
+    notify(`${LEVEL_LABELS[level]} giờ có bộ cửa sổ và trọng số riêng.`);
+  }
+
+  function mergeLevel(level: EntityLevel) {
+    if (!selected) return;
+    const next = { ...selected.levelSettings };
+    delete next[level];
+    patchScope({ levelSettings: next });
+    notify(`${LEVEL_LABELS[level]} quay lại dùng chung với scope.`);
+  }
+
   function addWindow() {
     if (!selected) return;
     const usedDays = new Set(
-      selected.windows
+      editedWindows
         .filter((window) => (window.kind ?? "ROLLING") === "ROLLING" && window.days)
         .map((window) => window.days as number)
     );
     const suggestedDays = [14, 30, 60, 90].find((days) => !usedDays.has(days));
     const days = suggestedDays ?? Math.max(0, ...usedDays) + 7;
-    patchScope({
-      windows: [...selected.windows, {
+    setEditedWindows([...editedWindows, {
         id: windowId(days),
         label: `${days} Days`,
         kind: "ROLLING",
@@ -122,32 +168,29 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
         minSpend: 0,
         minResults: 0,
         redFlagThreshold: null
-      }]
-    });
+      }]);
   }
 
   function patchWindow(index: number, patch: Partial<WindowConfig>) {
     if (!selected) return;
-    patchScope({ windows: selected.windows.map((window, itemIndex) => itemIndex === index ? { ...window, ...patch } : window) });
+    setEditedWindows(editedWindows.map((window, itemIndex) => itemIndex === index ? { ...window, ...patch } : window));
   }
 
   function removeWindow(index: number) {
-    if (!selected || selected.windows.length <= 1) return notify("Scope phải có ít nhất một window.", "error");
-    patchScope({ windows: selected.windows.filter((_, itemIndex) => itemIndex !== index) });
+    if (!selected || editedWindows.length <= 1) return notify("Phải giữ ít nhất một window.", "error");
+    setEditedWindows(editedWindows.filter((_, itemIndex) => itemIndex !== index));
   }
 
   function normalizeWeights() {
     if (!selected) return;
-    const total = selected.windows
+    const total = editedWindows
       .filter((window) => window.includeInScore)
       .reduce((sum, window) => sum + window.weight, 0);
     if (total <= 0) return notify("Cần ít nhất một window tham gia score.", "error");
-    patchScope({
-      windows: selected.windows.map((window) => window.includeInScore
-        ? { ...window, weight: Number((window.weight / total).toFixed(4)) }
-        : { ...window, weight: 0 })
-    });
-    notify("Đã normalize các window tham gia geometric score về 100%.");
+    setEditedWindows(editedWindows.map((window) => window.includeInScore
+      ? { ...window, weight: Number((window.weight / total).toFixed(4)) }
+      : { ...window, weight: 0 }));
+    notify("Đã chia lại trọng số các window trong score về đủ 100%.");
   }
 
   const rulesForScope = useMemo(
@@ -180,7 +223,7 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
   }
 
   if (!selected) return null;
-  const scoreWeight = selected.windows.filter((window) => window.includeInScore).reduce((sum, window) => sum + window.weight, 0);
+  const scoreWeight = editedWindows.filter((window) => window.includeInScore).reduce((sum, window) => sum + window.weight, 0);
 
   return (
     <>
@@ -276,14 +319,93 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
       <section className="sectionCard">
         <div className="sectionHeader">
           <div>
-            <span className="sectionKicker">GEOMETRIC WINDOW SCORE</span>
-            <h2>Window động của {selected.name}</h2>
-            <p>Chỉ window bật “Trong score” mới tham gia trung bình nhân. Diagnostic vẫn hiển thị trend.</p>
+            <span className="sectionKicker">Cửa sổ thời gian</span>
+            <h2>{selected.name}{activeLevel ? ` · ${LEVEL_LABELS[activeLevel]}` : ""}</h2>
+            <p>
+              {activeLevel
+                ? levelHasOwnWindows
+                  ? `Bộ cửa sổ và trọng số riêng của cấp ${LEVEL_LABELS[activeLevel]}.`
+                  : `Cấp ${LEVEL_LABELS[activeLevel]} đang dùng chung với scope. Tách riêng nếu muốn chấm cấp này bằng bộ số khác.`
+                : "Bộ dùng chung. Cấp nào chưa tách riêng thì chấm bằng bộ này."}
+            </p>
           </div>
-          <span className={`statusBadge ${Math.abs(scoreWeight - 1) < 0.0001 ? "success" : "danger"}`}>{Math.round(scoreWeight * 100)}%</span>
+          <span className={`statusBadge ${Math.abs(scoreWeight - 1) < 0.0001 ? "success" : "danger"}`}>
+            Tổng trọng số {Math.round(scoreWeight * 100)}%
+          </span>
         </div>
+
+        <div className="levelTabs" role="tablist" aria-label="Cấp entity">
+          {(["SHARED", "CAMPAIGN", "ADSET", "AD"] as const).map((tab) => (
+            <button
+              key={tab}
+              role="tab"
+              aria-selected={levelTab === tab}
+              className={levelTab === tab ? "active" : ""}
+              onClick={() => setLevelTab(tab)}
+            >
+              {tab === "SHARED" ? "Dùng chung" : LEVEL_LABELS[tab]}
+              {tab !== "SHARED" && selected.levelSettings?.[tab] && <i aria-label="đã tách riêng" />}
+            </button>
+          ))}
+        </div>
+
+        {activeLevel && (
+          <div className="levelBar">
+            {levelHasOwnWindows ? (
+              <>
+                <label>
+                  Điểm riêng entity %
+                  <input
+                    type="number" min="0" max="100"
+                    value={Math.round((effectiveLevel?.contextWeights.entity ?? 1) * 100)}
+                    onChange={(event) => {
+                      const entity = Math.min(100, Math.max(0, Number(event.target.value))) / 100;
+                      patchLevel(activeLevel, { contextWeights: { entity, context: Number((1 - entity).toFixed(4)) } });
+                    }}
+                  />
+                </label>
+                <label>
+                  Điểm nhóm %
+                  <input readOnly value={Math.round((effectiveLevel?.contextWeights.context ?? 0) * 100)} />
+                </label>
+                <label>
+                  Điểm nhóm lấy từ
+                  <select
+                    value={effectiveLevel?.contextSource ?? "PARENT"}
+                    onChange={(event) => patchLevel(activeLevel, { contextSource: event.target.value as OptimizationScope["contextSource"] })}
+                  >
+                    <option value="PARENT">Cấp cha trực tiếp</option>
+                    <option value="PROJECT">Tổng tài khoản</option>
+                  </select>
+                </label>
+                <label>
+                  Cách trộn cửa sổ
+                  <select
+                    value={effectiveLevel?.windowBlendMethod ?? "ARITHMETIC"}
+                    onChange={(event) => patchLevel(activeLevel, { windowBlendMethod: event.target.value as OptimizationScope["windowBlendMethod"] })}
+                  >
+                    <option value="ARITHMETIC">Trung bình cộng (giống sheet)</option>
+                    <option value="GEOMETRIC">Trung bình nhân (chặt hơn)</option>
+                  </select>
+                </label>
+                <button className="ghostAction" onClick={() => mergeLevel(activeLevel)}>Về dùng chung</button>
+              </>
+            ) : (
+              <>
+                <p>
+                  Để <b>{LEVEL_LABELS[activeLevel]}</b> quyết định bằng bộ số của riêng nó — ví dụ ad chỉ chấm
+                  bằng điểm của chính ad, còn ad set đọc cửa sổ dài hơn.
+                </p>
+                <button className="secondaryAction" onClick={() => splitLevel(activeLevel)}>
+                  <Plus size={15} /> Tách riêng cho {LEVEL_LABELS[activeLevel]}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         <div className="windowGrid dynamicWindows">
-          {selected.windows.map((window, index) => (
+          {editedWindows.map((window, index) => (
             <article key={window.id}>
               <div className="windowCardTitle"><strong>{window.label ?? window.id}</strong><button className="iconAction dangerIcon" onClick={() => removeWindow(index)}><Trash2 size={14} /></button></div>
               <label>Tên<input value={window.label ?? window.id} onChange={(event) => patchWindow(index, { label: event.target.value })} /></label>
@@ -302,8 +424,22 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
               <label>Min spend<input type="number" min="0" value={window.minSpend} onChange={(event) => patchWindow(index, { minSpend: Number(event.target.value) })} /></label>
               <label>Min result<input type="number" min="0" value={window.minResults} onChange={(event) => patchWindow(index, { minResults: Number(event.target.value) })} /></label>
               <label>Red flag dưới %<input type="number" min="0" max="1000" value={window.redFlagThreshold === null ? "" : window.redFlagThreshold * 100} onChange={(event) => patchWindow(index, { redFlagThreshold: event.target.value === "" ? null : Number(event.target.value) / 100 })} /></label>
-              <label className="checkboxLine"><input type="checkbox" checked={window.includeInScore} onChange={(event) => patchWindow(index, { includeInScore: event.target.checked, weight: event.target.checked ? window.weight : 0 })} /> Trong score</label>
-              <label className="checkboxLine"><input type="checkbox" checked={window.required} onChange={(event) => patchWindow(index, { required: event.target.checked })} /> Required</label>
+              <label className="checkboxLine"><input type="checkbox" checked={window.includeInScore} onChange={(event) => patchWindow(index, { includeInScore: event.target.checked, weight: event.target.checked ? window.weight : 0 })} /> Tính vào điểm</label>
+              <label className={`checkboxLine${window.includeInScore && window.weight > 0 ? "" : " inert"}`}>
+                <input
+                  type="checkbox"
+                  checked={window.required}
+                  disabled={!window.includeInScore || window.weight <= 0}
+                  onChange={(event) => patchWindow(index, { required: event.target.checked })}
+                /> Bắt buộc phải có
+              </label>
+              {window.required && (!window.includeInScore || window.weight <= 0) && (
+                <small className="fieldWarn">Trọng số 0 nên ô này không có tác dụng. Engine bỏ qua cửa sổ trước khi xét bắt buộc.</small>
+              )}
+              {(window.kind ?? "ROLLING") === "ROLLING" && window.days !== null
+                && !String(window.label ?? "").includes(String(window.days)) && (
+                <small className="fieldWarn">Tên ghi “{window.label ?? window.id}” nhưng đang lấy {window.days} ngày.</small>
+              )}
             </article>
           ))}
         </div>

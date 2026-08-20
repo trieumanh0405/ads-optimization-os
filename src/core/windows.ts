@@ -16,7 +16,8 @@ import {
   weightedGeometricMean,
   type MetricTotals
 } from "./metrics";
-import { resolvedWindows } from "./scopes";
+import { levelSettingsFor, resolvedWindows } from "./scopes";
+import type { ResolvedLevelSettings } from "./scopes";
 
 export type WindowId = string;
 export type WindowEvidence = {
@@ -166,7 +167,8 @@ export function blendWindowScores(
 function windowScore(
   windows: Record<string, WindowEvidence | null>,
   configWindows: WindowConfig[],
-  scope: OptimizationScope
+  cap: number,
+  method: OptimizationScope["windowBlendMethod"]
 ): number | null {
   const included = configWindows.filter((window) => window.includeInScore && window.weight > 0);
   return blendWindowScores(included.map((window) => {
@@ -176,7 +178,7 @@ function windowScore(
       weight: window.weight,
       required: window.required
     };
-  }), scope.achievementCap, scope.windowBlendMethod);
+  }), cap, method);
 }
 
 function minimumScore(windows: Record<string, WindowEvidence | null>, configWindows: WindowConfig[]): number | null {
@@ -223,7 +225,13 @@ export function buildEntityEvidence(
   asOfDate: string,
   scope: OptimizationScope
 ): EntityEvidence[] {
-  const configWindows = resolvedWindows(scope.windows);
+  // Each level is scored on its own windows, so an ad can be judged on a fast
+  // read while its ad set waits for a slower one, the way the reference
+  // spreadsheet keeps a separate tab per level.
+  const settingsByLevel = new Map<EntityLevel, ResolvedLevelSettings>(
+    (["CAMPAIGN", "ADSET", "AD"] as const).map((level) => [level, levelSettingsFor(scope, config, level)])
+  );
+  const settingsOf = (level: EntityLevel) => settingsByLevel.get(level) as ResolvedLevelSettings;
   const entityTarget = effectivePlanTarget(scope, definition);
   const groups = new Map<string, FactRow[]>();
   for (const row of expandFactLevels(facts)) {
@@ -237,6 +245,8 @@ export function buildEntityEvidence(
   }
   const evidence = [...groups.values()].map((rows) => {
     const current = [...rows].sort((a, b) => b.date.localeCompare(a.date))[0];
+    const levelSettings = settingsOf(current.entityLevel);
+    const configWindows = levelSettings.windows;
     const windows: Record<string, WindowEvidence | null> = {};
     for (const windowConfig of configWindows) {
       const bounds = windowBounds(windowConfig, asOfDate, config.startDate);
@@ -273,7 +283,7 @@ export function buildEntityEvidence(
       status: current.status,
       budgetType: current.budgetType,
       windows,
-      weightedAchievement: windowScore(windows, configWindows, scope),
+      weightedAchievement: windowScore(windows, configWindows, scope.achievementCap, levelSettings.windowBlendMethod),
       minimumWindowAchievement: minimumScore(windows, configWindows),
       trendRatio: trendScore(windows, configWindows),
       redFlagWindowIds: redFlagWindows(windows, configWindows),
@@ -292,8 +302,10 @@ export function buildEntityEvidence(
     : evidence.some((item) => item.entityLevel === "ADSET")
       ? "ADSET"
       : "AD";
+  const aggregateSettings = settingsOf(aggregateLevel);
+  const aggregateWindowConfigs = aggregateSettings.windows;
   const projectWindows: Record<string, WindowEvidence | null> = {};
-  for (const windowConfig of configWindows) {
+  for (const windowConfig of aggregateWindowConfigs) {
     const aggregateWindows = evidence
       .filter((item) => item.entityLevel === aggregateLevel)
       .map((item) => item.windows[windowConfig.id])
@@ -322,7 +334,9 @@ export function buildEntityEvidence(
       eligible: totals.spend >= windowConfig.minSpend && evidenceCount >= windowConfig.minResults
     };
   }
-  const projectWeightedAchievement = windowScore(projectWindows, configWindows, scope);
+  const projectWeightedAchievement = windowScore(
+    projectWindows, aggregateWindowConfigs, scope.achievementCap, aggregateSettings.windowBlendMethod
+  );
   return evidence.map((item) => ({ ...item, projectWeightedAchievement }));
 }
 
@@ -499,9 +513,13 @@ export function contextEvidence(entity: EntityEvidence, all: EntityEvidence[]): 
 export function contextAchievementFor(
   entity: EntityEvidence,
   all: EntityEvidence[],
-  scope: OptimizationScope
+  scope: OptimizationScope,
+  config?: ProjectConfig
 ): number | null {
-  if (scope.contextSource === "PROJECT") return entity.projectWeightedAchievement;
+  const source = config
+    ? levelSettingsFor(scope, config, entity.entityLevel).contextSource
+    : scope.contextSource;
+  if (source === "PROJECT") return entity.projectWeightedAchievement;
   return contextEvidence(entity, all)?.weightedAchievement ?? entity.projectWeightedAchievement;
 }
 
@@ -523,8 +541,8 @@ export function blendedAchievementFor(
   config: ProjectConfig,
   scope: OptimizationScope
 ): { blended: number | null; context: number | null } {
-  const context = contextAchievementFor(entity, all, scope);
-  const weights = config.contextWeights[entity.entityLevel];
+  const context = contextAchievementFor(entity, all, scope, config);
+  const weights = levelSettingsFor(scope, config, entity.entityLevel).contextWeights;
   if (entity.weightedAchievement === null) return { blended: null, context };
   if (context === null || weights.context <= 0) return { blended: entity.weightedAchievement, context };
   const totalWeight = weights.entity + weights.context;
