@@ -31,7 +31,7 @@ export function runOptimizationEngine(rawRequest: unknown) {
     const planEvidence = buildEntityEvidence(scopedFacts, scopedConfig, metric, request.asOfDate, scope);
     const cohort = buildCohortModel(scopedFacts, scope, metric, request.asOfDate);
     const evidence = attachContextEvidence(
-      attachCohortEvidence(planEvidence, cohort, scope, metric),
+      attachCohortEvidence(planEvidence, cohort, scope, metric, scopedConfig),
       scopedConfig,
       scope
     );

@@ -51,7 +51,9 @@ export function computeMetric(totals: MetricTotals, definition: MetricDefinition
   if (definition.kind === "SUM") return numerator;
   if (!definition.denominator) return null;
   const denominator = metricOperand(totals, definition.denominator);
-  if (denominator === null || denominator === 0) return definition.nullWhenDenominatorZero ? null : 0;
+  // A cost per result with no results is unknown, not zero. Returning 0 put
+  // "0 ₫ / Page Like" on screen next to half a million in spend.
+  if (denominator === null || denominator === 0) return null;
   return (numerator / denominator) * definition.multiplier;
 }
 

@@ -199,9 +199,16 @@ export function buildPacing(
 ): PacingBlock {
   const planStartDate = config.startDate;
   const planEndDate = config.planEndDate;
-  const elapsedDays = Math.max(1, dayDiff(planStartDate, asOfDate) + 1);
+  // Today belongs to exactly one side of the line. Counting it as both elapsed
+  // and remaining made the two numbers sum to one more than the plan, so the
+  // progress bar and the "per day still needed" figure described different
+  // calendars. Elapsed owns today; remaining counts the days after it.
   const totalDays = planEndDate ? Math.max(1, dayDiff(planStartDate, planEndDate) + 1) : null;
-  const remainingDays = totalDays === null ? null : Math.max(0, dayDiff(asOfDate, planEndDate as string) + 1);
+  const rawElapsed = dayDiff(planStartDate, asOfDate) + 1;
+  const elapsedDays = totalDays === null
+    ? Math.max(1, rawElapsed)
+    : Math.min(totalDays, Math.max(1, rawElapsed));
+  const remainingDays = totalDays === null ? null : Math.max(0, totalDays - elapsedDays);
   const timeProgress = totalDays === null ? null : Math.min(1, elapsedDays / totalDays);
 
   const targetQualified = scope.planTargetResults;
@@ -226,10 +233,15 @@ export function buildPacing(
     : requiredQualifiedPerDay * scope.planTarget;
 
   // Trailing average over complete days only, so a partial today does not drag
-  // the current pace down.
+  // the current pace down. The divisor is the length of the window, not the
+  // number of days that happened to have rows — dividing by the latter turns a
+  // week with two active days into a daily rate three times the real one, and
+  // the "extra budget needed" figure inherits that error.
   const trailingStart = addDays(asOfDate, -TRAILING_DAYS);
   const trailingFacts = facts.filter((fact) => fact.date >= trailingStart && fact.date < asOfDate);
-  const trailingDays = new Set(trailingFacts.map((fact) => fact.date)).size;
+  const observedDays = new Set(trailingFacts.map((fact) => fact.date)).size;
+  const planDaysInWindow = Math.max(0, Math.min(TRAILING_DAYS, dayDiff(planStartDate, asOfDate)));
+  const trailingDays = Math.max(observedDays, planDaysInWindow);
   const currentDailySpend = trailingDays === 0
     ? null
     : trailingFacts.reduce((sum, fact) => sum + fact.spend, 0) / trailingDays;

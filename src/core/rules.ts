@@ -1,5 +1,5 @@
 import type { ActionCode, MetricDefinition, OptimizationRule, OptimizationScope, ProjectConfig } from "./schemas";
-import type { EntityEvidence, WindowId } from "./windows";
+import type { EntityEvidence, WindowEvidence, WindowId } from "./windows";
 import { contextAchievementFor, effectivePlanTarget } from "./windows";
 import type { MetricTotals } from "./metrics";
 
@@ -83,7 +83,8 @@ function scoreFor(
   rule: OptimizationRule,
   entity: EntityEvidence,
   all: EntityEvidence[],
-  scope: OptimizationScope
+  scope: OptimizationScope,
+  config: ProjectConfig
 ): number | null {
   const scoreSource = canonicalScoreSource(rule.scoreSource);
   if (rule.evaluationField === "ACHIEVEMENT") {
@@ -94,11 +95,13 @@ function scoreFor(
       return entity.blendedAchievement ?? entity.weightedAchievement;
     }
     if (scoreSource === "ENTITY_GEOMETRIC") return entity.weightedAchievement;
-    if (scoreSource === "CONTEXT_GEOMETRIC") return contextAchievementFor(entity, all, scope);
+    if (scoreSource === "CONTEXT_GEOMETRIC") return contextAchievementFor(entity, all, scope, config);
     if (scoreSource === "COHORT_GEOMETRIC") return entity.cohortWeightedAchievement;
     if (scoreSource === "MIN_WINDOW") return entity.minimumWindowAchievement;
     if (scoreSource === "TREND") return entity.trendRatio;
-    return entity.windows[scoreSource as WindowId]?.achievement ?? null;
+    // A single window is capped like every other score a rule can match on.
+    const single = entity.windows[scoreSource as WindowId]?.achievement ?? null;
+    return single === null ? null : Math.min(single, scope.achievementCap);
   }
   if (AGGREGATE_SCORE_SOURCES.includes(scoreSource)) return null;
   const window = entity.windows[scoreSource as WindowId];
@@ -141,14 +144,41 @@ function getDenominatorEvidence(totals: MetricTotals, definition: MetricDefiniti
   return totals.result ?? 0;
 }
 
-function evidenceForRule(entity: EntityEvidence, rule: OptimizationRule, config: ProjectConfig, definition: MetricDefinition): boolean {
+/**
+ * Time windows nest: Today sits inside 3 Days sits inside 7 Days. Adding their
+ * totals counts the same spend and the same results two or three times, which
+ * quietly lets an entity clear an evidence bar it has not actually reached.
+ * The widest window already contains every narrower one, so it is the sample.
+ */
+function widestWindow(windows: WindowEvidence[]): WindowEvidence | null {
+  return windows.reduce<WindowEvidence | null>(
+    (widest, item) => (!widest || item.totals.spend > widest.totals.spend ? item : widest),
+    null
+  );
+}
+
+function evidenceForRule(
+  entity: EntityEvidence,
+  rule: OptimizationRule,
+  config: ProjectConfig,
+  definition: MetricDefinition,
+  scope: OptimizationScope
+): boolean {
   const sourceIds = evidenceSourceIds(entity, rule.evidenceSource);
-  const windows = sourceIds.map((id) => entity.windows[id]).filter((item): item is NonNullable<typeof item> => item !== null);
+  // A rule can name a window the entity's level does not configure. That is a
+  // misconfiguration, not a crash: the rule simply has no evidence to stand on.
+  const windows = sourceIds
+    .map((id) => entity.windows[id])
+    .filter((item): item is WindowEvidence => Boolean(item));
   if (windows.length !== sourceIds.length || windows.some((window) => !window.eligible)) return false;
-  const spendThreshold = Math.max(rule.minSpendAbsolute ?? 0, (rule.minSpendTargetMultiple ?? 0) * config.target);
-  const spend = windows.reduce((sum, item) => sum + item.totals.spend, 0);
-  const evidenceCount = windows.reduce((sum, item) => sum + getDenominatorEvidence(item.totals, definition), 0);
-  return spend >= spendThreshold && evidenceCount >= rule.minResults;
+  // The score is measured against the effective target, so the evidence bar has
+  // to live on the same scale or it is off by the estimate rate.
+  const scaleTarget = effectivePlanTarget(scope, definition);
+  const spendThreshold = Math.max(rule.minSpendAbsolute ?? 0, (rule.minSpendTargetMultiple ?? 0) * scaleTarget);
+  const widest = widestWindow(windows);
+  if (!widest) return false;
+  const evidenceCount = getDenominatorEvidence(widest.totals, definition);
+  return widest.totals.spend >= spendThreshold && evidenceCount >= rule.minResults;
 }
 
 /** Results and days of history that count as a full-strength sample. */
@@ -164,10 +194,11 @@ const FULL_CONFIDENCE_ROWS = 7;
  */
 function confidence(entity: EntityEvidence, rule: OptimizationRule, definition: MetricDefinition): number {
   const sourceIds = evidenceSourceIds(entity, rule.evidenceSource);
-  const sources = sourceIds.map((id) => entity.windows[id]).filter((item): item is NonNullable<typeof item> => item !== null);
-  if (!sources.length) return 0;
-  const evidenceCount = sources.reduce((sum, source) => sum + getDenominatorEvidence(source.totals, definition), 0);
-  const rowCount = sources.reduce((sum, source) => sum + source.rowCount, 0);
+  const sources = sourceIds.map((id) => entity.windows[id]).filter((item): item is WindowEvidence => Boolean(item));
+  const widest = widestWindow(sources);
+  if (!widest) return 0;
+  const evidenceCount = getDenominatorEvidence(widest.totals, definition);
+  const rowCount = widest.rowCount;
   const resultConfidence = Math.min(1, evidenceCount / FULL_CONFIDENCE_RESULTS);
   const rowConfidence = Math.min(1, rowCount / FULL_CONFIDENCE_ROWS);
   return Number(((resultConfidence * 0.6) + (rowConfidence * 0.4)).toFixed(3));
@@ -185,8 +216,8 @@ export function evaluateEntity(
     rule.enabled && rule.ruleSetId === config.ruleSetId && rule.version === config.ruleVersion
     && rule.entityLevel === entity.entityLevel && rule.metricKey === config.primaryMetricKey
   );
-  const scored = relevant.map((rule) => ({ rule, score: scoreFor(rule, entity, all, scope) }));
-  const evidenced = scored.filter((item) => item.score !== null && evidenceForRule(entity, item.rule, config, definition));
+  const scored = relevant.map((rule) => ({ rule, score: scoreFor(rule, entity, all, scope, config) }));
+  const evidenced = scored.filter((item) => item.score !== null && evidenceForRule(entity, item.rule, config, definition, scope));
   const matched = evidenced.filter((item) => matches(item.score as number, item.rule));
   const contextScore = entity.contextAchievement ?? contextAchievementFor(entity, all, scope);
   const todayWindow = Object.values(entity.windows).find((window) => window?.role === "SIGNAL")
@@ -310,7 +341,10 @@ export function evaluateEntity(
 
 export function applyCrossEntityGuardrails(recommendations: Recommendation[], config: ProjectConfig): Recommendation[] {
   let scaleCount = 0;
-  const childActions = recommendations.filter((item) => item.executionPhase === 1 && item.recommendedAction === "TURN_OFF");
+  // Any descendant being switched off should hold its parent's budget increase,
+  // not just an ad. Limiting this to phase 1 let a campaign be scaled up on the
+  // same run that turned off the ad set inside it.
+  const childActions = recommendations.filter((item) => item.recommendedAction === "TURN_OFF");
   return [...recommendations]
     .sort((a, b) => a.executionPhase - b.executionPhase || b.confidence - a.confidence)
     .map((item) => {
@@ -320,8 +354,10 @@ export function applyCrossEntityGuardrails(recommendations: Recommendation[], co
         if (scaleCount > config.maxDailyScaleActions) next = { ...next, recommendedAction: "REVIEW_MANUALLY", adjustmentPct: null, reasonCodes: [...next.reasonCodes, "DAILY_SCALE_LIMIT_REACHED"] };
       }
       const hasChildTurnOff = childActions.some((child) =>
-        item.entityLevel === "CAMPAIGN" ? child.campaignId === item.entityId
-          : item.entityLevel === "ADSET" ? child.adsetId === item.entityId : false
+        child.entityId !== item.entityId && (
+          item.entityLevel === "CAMPAIGN" ? child.campaignId === item.entityId
+            : item.entityLevel === "ADSET" ? child.adsetId === item.entityId : false
+        )
       );
       if (config.deferParentScaleWhenChildAction && hasChildTurnOff && item.recommendedAction === "INCREASE_BUDGET") {
         next = { ...next, recommendedAction: "REVIEW_MANUALLY", adjustmentPct: null, reasonCodes: [...next.reasonCodes, "EXECUTE_CHILD_ACTIONS_FIRST"] };

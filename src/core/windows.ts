@@ -134,18 +134,31 @@ export function windowBounds(window: WindowConfig, asOfDate: string, projectStar
  * the entity rows and the plan panel on the same scale.
  */
 export function effectivePlanTarget(scope: OptimizationScope, definition: MetricDefinition): number {
-  const appliesToResultCounts = definition.denominator === "result" || definition.denominator === "qualifiedResult";
-  if (scope.estimateRate === null || !appliesToResultCounts) return scope.planTarget;
-  return definition.direction === "LOWER_IS_BETTER"
-    ? scope.planTarget * scope.estimateRate
-    : scope.planTarget / scope.estimateRate;
+  // A metric already denominated in qualified results needs no bridge — it is
+  // measured on the plan's own scale. Converting it a second time halved every
+  // CPQL entity. Only a metric counted in platform-reported results converts,
+  // and it converts by the same multiplication whichever way "better" points:
+  // fewer qualified results per unit means the per-result figure moves by the
+  // rate itself, not by its reciprocal.
+  if (scope.estimateRate === null || definition.denominator !== "result") return scope.planTarget;
+  return scope.planTarget * scope.estimateRate;
 }
 
+/**
+ * How many observations stand behind a window.
+ *
+ * For a cost-per-result metric that is the result count. For a metric whose
+ * denominator is spend — ROAS being the obvious one — there is no result count
+ * to read, and falling through to `result` left every such entity permanently
+ * ineligible with a perfectly healthy value on screen. Spend is the sample
+ * there, so any spend at all counts as one observation.
+ */
 function resultEvidence(totals: MetricTotals, definition: MetricDefinition): number {
   if (definition.denominator === "qualifiedResult") return totals.qualifiedResult ?? 0;
   if (definition.denominator === "result") return totals.result ?? 0;
   if (definition.denominator === "clicks") return totals.clicks ?? 0;
   if (definition.denominator === "impressions") return totals.impressions ?? 0;
+  if (definition.denominator === "spend") return totals.spend > 0 ? 1 : 0;
   return totals.result ?? 0;
 }
 
@@ -170,7 +183,12 @@ function windowScore(
   cap: number,
   method: OptimizationScope["windowBlendMethod"]
 ): number | null {
-  const included = configWindows.filter((window) => window.includeInScore && window.weight > 0);
+  // A window marked required blocks the score when it has no value, even at
+  // weight 0 — otherwise the checkbox is decoration. Zero-weight windows carry
+  // no weight into the blend; they only get a vote on whether it exists.
+  const included = configWindows.filter(
+    (window) => window.includeInScore && (window.weight > 0 || window.required)
+  );
   return blendWindowScores(included.map((window) => {
     const evidence = windows[window.id];
     return {
@@ -181,12 +199,21 @@ function windowScore(
   }), cap, method);
 }
 
-function minimumScore(windows: Record<string, WindowEvidence | null>, configWindows: WindowConfig[]): number | null {
+/**
+ * The weakest scored window, on the same capped scale as the blended score.
+ * Left uncapped, a window with a rounding-artefact 100x achievement could clear
+ * a scale rule that the blend was specifically designed to suppress.
+ */
+function minimumScore(
+  windows: Record<string, WindowEvidence | null>,
+  configWindows: WindowConfig[],
+  cap: number
+): number | null {
   const values = configWindows
     .filter((window) => window.includeInScore && window.weight > 0)
     .map((window) => windows[window.id])
     .filter((window): window is WindowEvidence => Boolean(window?.eligible && window.achievement !== null))
-    .map((window) => window.achievement as number);
+    .map((window) => Math.min(window.achievement as number, cap));
   return values.length ? Math.min(...values) : null;
 }
 
@@ -284,7 +311,7 @@ export function buildEntityEvidence(
       budgetType: current.budgetType,
       windows,
       weightedAchievement: windowScore(windows, configWindows, scope.achievementCap, levelSettings.windowBlendMethod),
-      minimumWindowAchievement: minimumScore(windows, configWindows),
+      minimumWindowAchievement: minimumScore(windows, configWindows, scope.achievementCap),
       trendRatio: trendScore(windows, configWindows),
       redFlagWindowIds: redFlagWindows(windows, configWindows),
       projectWeightedAchievement: null,
@@ -356,6 +383,8 @@ export type CohortModel = {
   /** 1 = best performer in the peer group. */
   rankFor: (id: string) => number | null;
   size: number;
+  /** The level the peer group was built at. Only that level may be judged by it. */
+  entityLevel: EntityLevel;
 };
 
 const EMPTY_COHORT: CohortModel = {
@@ -363,7 +392,8 @@ const EMPTY_COHORT: CohortModel = {
   entityValues: new Map(),
   benchmarkFor: () => null,
   rankFor: () => null,
-  size: 0
+  size: 0,
+  entityLevel: "AD"
 };
 
 export function buildCohortModel(
@@ -374,12 +404,12 @@ export function buildCohortModel(
 ): CohortModel {
   const settings = scope.cohortBenchmark;
   if (!settings.enabled) return EMPTY_COHORT;
+  const level = baseEntityLevel(facts);
   if (settings.manualValue) {
-    return { ...EMPTY_COHORT, benchmark: settings.manualValue, benchmarkFor: () => settings.manualValue };
+    return { ...EMPTY_COHORT, benchmark: settings.manualValue, benchmarkFor: () => settings.manualValue, entityLevel: level };
   }
   const start = addDays(asOfDate, -settings.lookbackDays + 1);
   const end = addDays(asOfDate, 1);
-  const level = baseEntityLevel(facts);
   const selected = facts.filter((fact) => fact.entityLevel === level && fact.date >= start && fact.date < end);
   const aggregate = sumFacts(selected);
   if (resultEvidence(aggregate, definition) < settings.minResults) return EMPTY_COHORT;
@@ -433,7 +463,8 @@ export function buildCohortModel(
     entityValues,
     benchmarkFor,
     rankFor: (id: string) => rankById.get(id) ?? null,
-    size: entityValues.size
+    size: entityValues.size,
+    entityLevel: level
   };
 }
 
@@ -452,9 +483,12 @@ export function computeCohortWeightedAchievement(
   entity: EntityEvidence,
   cohortBenchmark: number,
   scope: OptimizationScope,
-  definition: MetricDefinition
+  definition: MetricDefinition,
+  config?: ProjectConfig
 ): number | null {
-  const configWindows = resolvedWindows(scope.windows);
+  const configWindows = config
+    ? levelSettingsFor(scope, config, entity.entityLevel).windows
+    : resolvedWindows(scope.windows);
   const included = configWindows.filter((window) => window.includeInScore && window.weight > 0);
   return blendWindowScores(
     included.map((window) => {
@@ -477,15 +511,22 @@ export function attachCohortEvidence(
   planEvidence: EntityEvidence[],
   cohort: CohortModel,
   scope: OptimizationScope,
-  definition: MetricDefinition
+  definition: MetricDefinition,
+  config?: ProjectConfig
 ): EntityEvidence[] {
+  // The peer group is built at one level only. Comparing a campaign against the
+  // median individual ad is not a benchmark, it is a category error — and it
+  // was silently blocking campaign scaling through the cohort guardrail.
   return planEvidence.map((item) => {
+    if (item.entityLevel !== cohort.entityLevel) {
+      return { ...item, cohortWeightedAchievement: null, cohortBenchmark: null, cohortRank: null, cohortSize: null };
+    }
     const benchmark = cohort.benchmarkFor(item.entityId);
     return {
       ...item,
       cohortWeightedAchievement: benchmark === null
         ? null
-        : computeCohortWeightedAchievement(item, benchmark, scope, definition),
+        : computeCohortWeightedAchievement(item, benchmark, scope, definition, config),
       cohortBenchmark: benchmark,
       cohortRank: cohort.rankFor(item.entityId),
       cohortSize: cohort.size
@@ -520,7 +561,11 @@ export function contextAchievementFor(
     ? levelSettingsFor(scope, config, entity.entityLevel).contextSource
     : scope.contextSource;
   if (source === "PROJECT") return entity.projectWeightedAchievement;
-  return contextEvidence(entity, all)?.weightedAchievement ?? entity.projectWeightedAchievement;
+  const parent = contextEvidence(entity, all);
+  // No parent means no second opinion. Falling back to the account aggregate
+  // compares a lone campaign with itself, which can never fail a guardrail.
+  if (!parent) return entity.entityLevel === "CAMPAIGN" ? null : entity.projectWeightedAchievement;
+  return parent.weightedAchievement;
 }
 
 export function contextGeometricAchievement(entity: EntityEvidence, all: EntityEvidence[]): number | null {
