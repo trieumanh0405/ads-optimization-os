@@ -10,6 +10,7 @@ import type {
 } from "@/core/schemas";
 import { legacyScope, levelSettingsFor, resolvedScopes } from "@/core/scopes";
 import { buildDefaultRules, slugify } from "@/product/defaults";
+import { ScopeClassifier } from "./scope-classifier";
 import type { LocalProject } from "@/product/types";
 
 type Props = {
@@ -147,6 +148,50 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
     notify(`${LEVEL_LABELS[level]} quay lại dùng chung với scope.`);
   }
 
+  /**
+   * Once any value is assigned, a row that matches nothing must not fall into a
+   * scope by default — that is how five objectives ended up being scored by one
+   * KPI. Saving an assignment closes that door in the same move.
+   */
+  function saveClassification(nextRules: ClassificationRule[]) {
+    const nextScopes = nextRules.length
+      ? scopes.map((scope) => ({ ...scope, fallbackClassification: "REVIEW_UNCLASSIFIED" as const }))
+      : scopes;
+    saveScopes(nextScopes, project.rules, nextRules);
+  }
+
+  function createScopeForValue(value: string, field: string) {
+    const base = selected ?? legacyScope(project.config);
+    const scopeId = `${slugify(value) || "nhom"}-${crypto.randomUUID().slice(0, 5)}`;
+    const ruleSetId = `${project.config.projectId}-${scopeId}-rules`;
+    const scope: OptimizationScope = {
+      ...structuredClone(base),
+      scopeId,
+      name: value,
+      optimizationEventLabel: value,
+      ruleSetId,
+      fallbackClassification: "REVIEW_UNCLASSIFIED"
+    };
+    const rule: ClassificationRule = {
+      id: `auto-${field}-${value}`.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 60),
+      name: `${value} → ${value}`,
+      field,
+      operator: "EQUALS",
+      values: [value],
+      outcome: "PFM_INCLUDED",
+      scopeId,
+      priority: 100,
+      enabled: true
+    };
+    saveScopes(
+      [...scopes.map((item) => ({ ...item, fallbackClassification: "REVIEW_UNCLASSIFIED" as const })), scope],
+      [...project.rules, ...buildDefaultRules(scope.primaryMetricKey, ruleSetId, scope.windows)],
+      [...project.config.classificationRules.filter((item) => item.id !== rule.id), rule]
+    );
+    setSelectedScopeId(scopeId);
+    notify(`Đã tạo nhóm "${value}". Đặt KPI và target cho nhóm này rồi chạy lại.`);
+  }
+
   function addWindow() {
     if (!selected) return;
     const usedDays = new Set(
@@ -193,34 +238,6 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
     notify("Đã chia lại trọng số các window trong score về đủ 100%.");
   }
 
-  const rulesForScope = useMemo(
-    () => project.config.classificationRules.filter((rule) => !rule.scopeId || rule.scopeId === selected?.scopeId),
-    [project.config.classificationRules, selected?.scopeId]
-  );
-
-  function addClassificationRule(outcome: ClassificationRule["outcome"]) {
-    if (!selected) return;
-    const rule: ClassificationRule = {
-      id: `class-${crypto.randomUUID().slice(0, 8)}`,
-      name: outcome === "PFM_INCLUDED" ? `Đưa vào ${selected.name}` : "Loại Non-PFM",
-      field: "entityName",
-      operator: "CONTAINS",
-      values: outcome === "PFM_INCLUDED" ? ["Purchase", "Sale", "Mess", "Lead"] : ["Reach", "Awareness", "Enga", "Thru", "Follow"],
-      outcome,
-      scopeId: outcome === "PFM_INCLUDED" ? selected.scopeId : null,
-      priority: outcome === "NON_PFM_EXCLUDED" ? 50 : 100,
-      enabled: true
-    };
-    saveScopes(scopes, project.rules, [...project.config.classificationRules, rule]);
-  }
-
-  function patchClassification(ruleId: string, patch: Partial<ClassificationRule>) {
-    saveScopes(scopes, project.rules, project.config.classificationRules.map((rule) => rule.id === ruleId ? { ...rule, ...patch } : rule));
-  }
-
-  function removeClassification(ruleId: string) {
-    saveScopes(scopes, project.rules, project.config.classificationRules.filter((rule) => rule.id !== ruleId));
-  }
 
   if (!selected) return null;
   const scoreWeight = editedWindows.filter((window) => window.includeInScore).reduce((sum, window) => sum + window.weight, 0);
@@ -509,37 +526,14 @@ export function ScopeManager({ project, onUpdate, notify }: Props) {
         </div>
       </section>
 
-      <section className="sectionCard">
-        <div className="sectionHeader">
-          <div><span className="sectionKicker">PFM CLASSIFIER</span><h2>Naming → Scope / Non-PFM</h2><p>Rule có priority cao thắng trước. Dữ liệu chưa khớp được đưa vào Review thay vì tự đoán.</p></div>
-          <div className="topbarActions">
-            <button className="secondaryAction" onClick={() => addClassificationRule("PFM_INCLUDED")}><Plus size={15} /> Rule PFM</button>
-            <button className="secondaryAction" onClick={() => addClassificationRule("NON_PFM_EXCLUDED")}><Plus size={15} /> Rule loại</button>
-          </div>
-        </div>
-        <p className="scopeHint">Field thường dùng: <code>entityName</code>, <code>objective</code>, <code>dimensions.campaignName</code>, <code>dimensions.kpiMetric</code>, <code>dimensions.funnel</code>. Dùng CONTAINS cho token trong naming; dùng EQUALS/IN cho cột đã chuẩn hóa.</p>
-        <div className="classificationRows">
-          {rulesForScope.length === 0 && <p className="emptyMapping">Chưa có rule naming. Scope fallback hiện tại sẽ quyết định dữ liệu unmatched.</p>}
-          {rulesForScope.map((rule) => (
-            <div className="classificationRow" key={rule.id}>
-              <input value={rule.name} onChange={(event) => patchClassification(rule.id, { name: event.target.value })} />
-              <input value={rule.field} onChange={(event) => patchClassification(rule.id, { field: event.target.value })} placeholder="dimensions.kpiMetric" />
-              <select value={rule.operator} onChange={(event) => patchClassification(rule.id, { operator: event.target.value as ClassificationRule["operator"] })}>
-                <option value="IN">IN</option><option value="EQUALS">Equals</option><option value="CONTAINS">Contains</option><option value="REGEX">Regex</option>
-              </select>
-              <input value={rule.values.join(", ")} onChange={(event) => patchClassification(rule.id, { values: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} />
-              <select value={rule.outcome} onChange={(event) => patchClassification(rule.id, {
-                outcome: event.target.value as ClassificationRule["outcome"],
-                scopeId: event.target.value === "PFM_INCLUDED" ? selected.scopeId : null
-              })}>
-                <option value="PFM_INCLUDED">PFM → {selected.name}</option><option value="NON_PFM_EXCLUDED">Non-PFM</option>
-              </select>
-              <input type="number" value={rule.priority} onChange={(event) => patchClassification(rule.id, { priority: Number(event.target.value) })} />
-              <button className="iconAction dangerIcon" onClick={() => removeClassification(rule.id)}><Trash2 size={14} /></button>
-            </div>
-          ))}
-        </div>
-      </section>
+      <ScopeClassifier
+        facts={project.facts}
+        scopes={scopes}
+        rules={project.config.classificationRules}
+        currency={project.config.currency}
+        onChange={saveClassification}
+        onCreateScopeForValue={createScopeForValue}
+      />
     </>
   );
 }
