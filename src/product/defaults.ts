@@ -242,7 +242,8 @@ export function createProject(input: ProjectCreateInput): LocalProject {
     },
     cohortGuard: { enabled: false, minPlanAchievement: 0.7, minCohortAchievement: 1.2 },
     methodologyVersion: CURRENT_METHODOLOGY_VERSION,
-    fallbackClassification: "PFM_INCLUDED"
+    fallbackClassification: "PFM_INCLUDED",
+  levelSettings: {}
   };
   const config: ProjectConfig = {
     projectId,

@@ -89,7 +89,8 @@ describe("buildEntityEvidence", () => {
         cohortGuard: { enabled: false, minPlanAchievement: 0.7, minCohortAchievement: 1.2 },
         methodologyVersion: 2,
         cohortBenchmark: { enabled: true, lookbackDays: 14, minEntities: 3, minResults: 5, method: "AGGREGATE", excludeSelf: true, manualValue: null },
-      fallbackClassification: "PFM_INCLUDED"
+      fallbackClassification: "PFM_INCLUDED",
+  levelSettings: {}
     };
 
     const evidence = buildEntityEvidence([adFact], config, definition, "2026-07-30", scope);

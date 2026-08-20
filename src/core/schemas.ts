@@ -107,6 +107,31 @@ export const cohortGuardSchema = z.object({
   minCohortAchievement: z.number().min(0).default(1.2)
 });
 
+/**
+ * A campaign, an ad set and an ad are not the same instrument and should not be
+ * judged on the same settings. A buyer turns an ad off on the ad's own evidence,
+ * but moves an ad set's budget on a slower, wider read. The reference
+ * spreadsheet models this as one tab per level; this is that, per scope.
+ *
+ * Every field is nullable and means "inherit whatever the scope says", so a
+ * project that never touches this keeps behaving exactly as before.
+ */
+export const levelSettingsSchema = z.object({
+  windows: z.array(windowConfigSchema).min(1).nullable().default(null),
+  contextWeights: z.object({
+    entity: z.number().min(0).max(1),
+    context: z.number().min(0).max(1)
+  }).nullable().default(null),
+  windowBlendMethod: z.enum(["ARITHMETIC", "GEOMETRIC"]).nullable().default(null),
+  contextSource: z.enum(["PROJECT", "PARENT"]).nullable().default(null)
+});
+
+export const levelSettingsMapSchema = z.object({
+  CAMPAIGN: levelSettingsSchema.optional(),
+  ADSET: levelSettingsSchema.optional(),
+  AD: levelSettingsSchema.optional()
+}).default({});
+
 export const optimizationScopeSchema = z.object({
   scopeId: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
   name: z.string().min(1),
@@ -151,7 +176,9 @@ export const optimizationScopeSchema = z.object({
   // Bumped when the scoring defaults change so stored projects are upgraded
   // on read instead of silently keeping superseded behaviour.
   methodologyVersion: z.number().int().positive().default(1),
-  fallbackClassification: z.enum(["PFM_INCLUDED", "REVIEW_UNCLASSIFIED"]).default("REVIEW_UNCLASSIFIED")
+  fallbackClassification: z.enum(["PFM_INCLUDED", "REVIEW_UNCLASSIFIED"]).default("REVIEW_UNCLASSIFIED"),
+  /** Per-level overrides. Empty means every level inherits the scope. */
+  levelSettings: levelSettingsMapSchema
 });
 
 export const classificationRuleSchema = z.object({

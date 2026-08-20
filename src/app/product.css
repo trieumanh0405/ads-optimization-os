@@ -294,3 +294,20 @@ tr.band-edge-unknown td:first-child{box-shadow:inset 3px 0 0 var(--band-idle-lin
 .drawerDiagnosis{display:flex;align-items:flex-start;gap:9px;margin:0 0 14px;border:1px solid var(--band-watch-line);border-left:3px solid var(--band-watch);border-radius:9px;padding:11px 13px;background:var(--band-watch-bg);color:#5f3d03;font-size:11.5px;line-height:1.55}
 .drawerDiagnosis>svg{flex:0 0 auto;margin-top:2px;color:var(--band-watch)}
 .drawerDiagnosis b{color:#3f2802}
+
+/* Per-level configuration: one tab per entity level, the way the reference
+   spreadsheet keeps one sheet tab per level. */
+.levelTabs{display:flex;flex-wrap:wrap;gap:2px;margin:0 18px;border:1px solid var(--border);border-radius:9px;padding:3px;background:var(--surface-soft)}
+.levelTabs button{position:relative;display:inline-flex;align-items:center;gap:6px;min-height:34px;border:0;border-radius:6px;padding:0 13px;background:transparent;color:var(--muted);font:600 11.5px var(--sans)}
+.levelTabs button.active{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgb(17 24 21 / 10%)}
+.levelTabs button i{width:6px;height:6px;border-radius:50%;background:var(--band-keep)}
+.levelBar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px;margin:12px 18px 0;border:1px solid var(--border);border-radius:9px;padding:12px 14px;background:var(--surface-soft)}
+.levelBar label{display:flex;min-width:0;flex-direction:column;gap:5px;color:#4a554e;font-size:11px;font-weight:600}
+.levelBar input,.levelBar select{min-height:36px;border:1px solid #d3dacf;border-radius:7px;padding:0 9px;background:#fff;color:var(--ink);font-size:12px}
+.levelBar input[readonly]{background:var(--surface-soft);color:var(--muted)}
+.levelBar p{flex:1;min-width:240px;margin:0;color:var(--muted);font-size:11.5px;line-height:1.55}
+.levelBar b{color:var(--ink)}
+.levelBar .ghostAction,.levelBar .secondaryAction{margin-left:auto}
+.checkboxLine.inert{opacity:.5}
+.fieldWarn{display:block;margin-top:-4px;color:var(--band-watch);font-size:10px;line-height:1.45}
+.bandTableTitle{display:block;margin-top:10px;color:#98a49c;font-size:10.5px}

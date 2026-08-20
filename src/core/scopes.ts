@@ -1,6 +1,7 @@
 import { CURRENT_METHODOLOGY_VERSION } from "./schemas";
 import type {
   ClassificationRule,
+  EntityLevel,
   FactRow,
   OptimizationScope,
   ProjectConfig,
@@ -80,7 +81,34 @@ export function legacyScope(config: ProjectConfig): OptimizationScope {
     methodologyVersion: CURRENT_METHODOLOGY_VERSION,
     // Existing projects keep operating until an admin creates classification
     // rules. Once rules exist, unmatched rows are sent to review.
-    fallbackClassification: config.classificationRules.length ? "REVIEW_UNCLASSIFIED" : "PFM_INCLUDED"
+    fallbackClassification: config.classificationRules.length ? "REVIEW_UNCLASSIFIED" : "PFM_INCLUDED",
+    levelSettings: {}
+  };
+}
+
+export type ResolvedLevelSettings = {
+  windows: WindowConfig[];
+  contextWeights: { entity: number; context: number };
+  windowBlendMethod: OptimizationScope["windowBlendMethod"];
+  contextSource: OptimizationScope["contextSource"];
+};
+
+/**
+ * What a given level is actually scored on. Anything the level does not
+ * override falls through to the scope, and then to the project — so a scope
+ * that was configured before levels existed behaves exactly as it did.
+ */
+export function levelSettingsFor(
+  scope: OptimizationScope,
+  config: ProjectConfig,
+  entityLevel: EntityLevel
+): ResolvedLevelSettings {
+  const override = scope.levelSettings?.[entityLevel];
+  return {
+    windows: resolvedWindows(override?.windows ?? scope.windows),
+    contextWeights: override?.contextWeights ?? config.contextWeights[entityLevel],
+    windowBlendMethod: override?.windowBlendMethod ?? scope.windowBlendMethod,
+    contextSource: override?.contextSource ?? scope.contextSource
   };
 }
 

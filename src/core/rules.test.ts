@@ -46,7 +46,8 @@ const scope: OptimizationScope = {
   cohortGuard: { enabled: true, minPlanAchievement: 0, minCohortAchievement: 1 },
   methodologyVersion: 2,
   cohortBenchmark: { enabled: true, lookbackDays: 14, minEntities: 3, minResults: 5, method: "AGGREGATE", excludeSelf: true, manualValue: null },
-  fallbackClassification: "PFM_INCLUDED"
+  fallbackClassification: "PFM_INCLUDED",
+  levelSettings: {}
 };
 const metric = { key: "CPL", label: "CPL", kind: "RATIO", numerator: "spend", denominator: "result", multiplier: 1, direction: "LOWER_IS_BETTER", nullWhenDenominatorZero: true } as const;
 const rule = (id: string, actionCode: OptimizationRule["actionCode"], priority = 10): OptimizationRule => ({

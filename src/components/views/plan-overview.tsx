@@ -14,14 +14,16 @@ export type PlanOverviewProps = {
   contextWeights: { entity: number; context: number };
   contextSource: "PARENT" | "PROJECT";
   windowWeights: Array<{ id: string; label: string; weight: number }>;
+  bands: ThresholdBand[];
+  bandLevelLabel: string;
 };
 
-const BANDS = [
-  { min: 1.2, max: null, label: "Giữ / tăng đầu tư", tone: "scale" },
-  { min: 1.0, max: 1.2, label: "Giữ", tone: "keep" },
-  { min: 0.8, max: 1.0, label: "Giữ ad / giảm ngân sách", tone: "watch" },
-  { min: 0, max: 0.8, label: "Tắt", tone: "off" }
-] as const;
+/**
+ * The threshold table used to be written into this file, so it kept promising
+ * "Giữ ad" while the project's stored rule said TURN_OFF. A legend that can
+ * disagree with the engine is worse than no legend, so it is derived now.
+ */
+export type ThresholdBand = { min: number; max: number | null; label: string; tone: string };
 
 /** One figure in the masthead: a number large enough to read across a desk. */
 function Figure({
@@ -42,7 +44,9 @@ export function PlanOverview({
   config,
   contextWeights,
   contextSource,
-  windowWeights
+  windowWeights,
+  bands,
+  bandLevelLabel
 }: PlanOverviewProps) {
   const [open, setOpen] = useState(false);
   const currency = summary.currency;
@@ -192,10 +196,14 @@ export function PlanOverview({
                   <b>{contextSource === "PROJECT" ? "Tổng tài khoản" : "Cấp cha"} {formatPercent(contextWeights.context)}</b>
                 </div>
               </div>
+              <span className="bandTableTitle">Ngưỡng đang áp dụng cho {bandLevelLabel}</span>
               <table className="bandTable">
                 <tbody>
-                  {BANDS.map((item) => (
-                    <tr key={item.label} className={band === item.tone ? "current" : ""}>
+                  {bands.length === 0 && (
+                    <tr><td colSpan={2}>Chưa có rule nào cho cấp này.</td></tr>
+                  )}
+                  {bands.map((item) => (
+                    <tr key={`${item.min}-${item.label}`} className={band === item.tone ? "current" : ""}>
                       <td className="mono">
                         {Math.round(item.min * 100)}%
                         {item.max === null ? " trở lên" : ` - ${Math.round(item.max * 100)}%`}

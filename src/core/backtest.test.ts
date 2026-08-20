@@ -44,6 +44,7 @@ describe("backtest", () => {
         methodologyVersion: 2,
         cohortBenchmark: { enabled: true, lookbackDays: 14, minEntities: 3, minResults: 5, method: "AGGREGATE", excludeSelf: true, manualValue: null },
         fallbackClassification: "PFM_INCLUDED",
+  levelSettings: {},
       },
     ],
     classificationRules: [],
