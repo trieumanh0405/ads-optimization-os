@@ -72,13 +72,24 @@ export function runDataQualityChecks(request: EngineRequest): QcResult {
       && !(activeDefinition.kind === "RATIO" && activeDefinition.numerator === "spend" && activeDefinition.direction === "LOWER_IS_BETTER")) {
       issues.push({ code: `TARGET_MULTIPLE_INVALID_${scope.scopeId}`, severity: "FATAL", message: `${scope.name}: target spend multiple is only valid for lower-is-better cost ratios.` });
     }
-    const scoredWindows = scope.windows.filter((window) => window.includeInScore && window.weight > 0);
-    const windowWeight = scoredWindows.reduce((sum, item) => sum + item.weight, 0);
-    if (!scoredWindows.length || Math.abs(windowWeight - 1) > 0.0001) {
-      issues.push({ code: `WINDOW_WEIGHTS_NOT_100_${scope.scopeId}`, severity: "FATAL", message: `${scope.name}: scored window weights sum to ${windowWeight}, expected 1.` });
-    }
-    if (new Set(scope.windows.map((window) => window.id)).size !== scope.windows.length) {
-      issues.push({ code: `DUPLICATE_WINDOW_IDS_${scope.scopeId}`, severity: "FATAL", message: `${scope.name}: window IDs must be unique.` });
+    // Every window set the engine can actually run on has to be checked, not
+    // just the shared one. A level with its own broken weights used to pass QC
+    // and then silently return a null score for every entity at that level.
+    const windowSets: Array<{ label: string; windows: typeof scope.windows }> = [
+      { label: scope.name, windows: scope.windows },
+      ...(["CAMPAIGN", "ADSET", "AD"] as const)
+        .map((level) => ({ label: `${scope.name} · ${level}`, windows: scope.levelSettings?.[level]?.windows }))
+        .filter((item): item is { label: string; windows: typeof scope.windows } => Boolean(item.windows))
+    ];
+    for (const set of windowSets) {
+      const scoredWindows = set.windows.filter((window) => window.includeInScore && window.weight > 0);
+      const windowWeight = scoredWindows.reduce((sum, item) => sum + item.weight, 0);
+      if (!scoredWindows.length || Math.abs(windowWeight - 1) > 0.0001) {
+        issues.push({ code: `WINDOW_WEIGHTS_NOT_100_${scope.scopeId}`, severity: "FATAL", message: `${set.label}: scored window weights sum to ${windowWeight}, expected 1.` });
+      }
+      if (new Set(set.windows.map((window) => window.id)).size !== set.windows.length) {
+        issues.push({ code: `DUPLICATE_WINDOW_IDS_${scope.scopeId}`, severity: "FATAL", message: `${set.label}: window IDs must be unique.` });
+      }
     }
   }
   const validScopeIds = new Set(scopes.map((scope) => scope.scopeId));

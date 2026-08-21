@@ -311,3 +311,16 @@ tr.band-edge-unknown td:first-child{box-shadow:inset 3px 0 0 var(--band-idle-lin
 .checkboxLine.inert{opacity:.5}
 .fieldWarn{display:block;margin-top:-4px;color:var(--band-watch);font-size:10px;line-height:1.45}
 .bandTableTitle{display:block;margin-top:10px;color:#98a49c;font-size:10.5px}
+
+/* Column-value picker: what the classifier used to ask for in field paths. */
+.columnPicker{display:flex;flex-direction:column;gap:5px;color:#4a554e;font-size:11px;font-weight:600;white-space:nowrap}
+.columnPicker select{min-height:38px;border:1px solid #d3dacf;border-radius:8px;padding:0 10px;background:#fff;color:var(--ink);font-size:12.5px}
+.valueTable{width:100%;border-collapse:collapse}
+.valueTable th{padding:10px 16px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--surface-soft);color:var(--muted);font:500 11px var(--sans);text-align:left;white-space:nowrap}
+.valueTable td{padding:9px 16px;border-bottom:1px solid var(--border-soft);vertical-align:middle}
+.valueTable .numeric,.valueTable th.numeric{text-align:right}
+.valueTable tbody tr:hover{background:var(--surface-soft)}
+.valueTable tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--band-idle-line)}
+.valueTable strong{font-size:12.5px;font-weight:500}
+.valueTable select{min-height:34px;min-width:170px;border:1px solid #d3dacf;border-radius:7px;padding:0 8px;background:#fff;color:var(--ink);font-size:11.5px}
+.evidenceList .strong dd{font-size:11.5px;line-height:1.5;text-align:right}

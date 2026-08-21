@@ -159,7 +159,9 @@ describe("budget pacing answers how much more has to be pushed", () => {
     }).pacing;
     expect(pacing.totalDays).toBe(20);
     expect(pacing.elapsedDays).toBe(10);
-    expect(pacing.remainingDays).toBe(11);
+    expect(pacing.remainingDays).toBe(10);
+    // The day in progress belongs to elapsed, never to both sides at once.
+    expect((pacing.elapsedDays ?? 0) + (pacing.remainingDays ?? 0)).toBe(pacing.totalDays);
     expect(pacing.timeProgress).toBeCloseTo(0.5, 5);
   });
 
@@ -184,13 +186,13 @@ describe("budget pacing answers how much more has to be pushed", () => {
     const pacing = buildScopeSummary({
       facts, config, scope, definition: CPL_METRIC, asOfDate: AS_OF, runAt: RUN_AT, entityCount: 1
     }).pacing;
-    // 200 delivered, 400 still needed across 11 remaining days.
+    // 200 delivered, 400 still needed across the 10 days after today.
     expect(pacing.qualifiedRemaining).toBe(400);
-    expect(pacing.requiredQualifiedPerDay).toBeCloseTo(400 / 11, 5);
+    expect(pacing.requiredQualifiedPerDay).toBeCloseTo(400 / 10, 5);
     // Achieved cost per result is 10,000,000 spend / 200 results = 50,000.
-    expect(pacing.requiredDailySpend).toBeCloseTo((400 / 11) * 50_000, 0);
+    expect(pacing.requiredDailySpend).toBeCloseTo((400 / 10) * 50_000, 0);
     expect(pacing.currentDailySpend).toBeCloseTo(1_000_000, 0);
-    expect(pacing.additionalDailySpend).toBeCloseTo((400 / 11) * 50_000 - 1_000_000, 0);
+    expect(pacing.additionalDailySpend).toBeCloseTo((400 / 10) * 50_000 - 1_000_000, 0);
     expect(pacing.remainingBudget).toBeCloseTo(400 * 50_000, 0);
   });
 
@@ -202,7 +204,7 @@ describe("budget pacing answers how much more has to be pushed", () => {
     const pacing = buildScopeSummary({
       facts, config, scope, definition: CPL_METRIC, asOfDate: AS_OF, runAt: RUN_AT, entityCount: 1
     }).pacing;
-    expect(pacing.requiredDailySpendAtPlanEfficiency).toBeCloseTo((400 / 11) * 25_000, 0);
+    expect(pacing.requiredDailySpendAtPlanEfficiency).toBeCloseTo((400 / 10) * 25_000, 0);
     expect(pacing.requiredDailySpendAtPlanEfficiency as number)
       .toBeLessThan(pacing.requiredDailySpend as number);
   });

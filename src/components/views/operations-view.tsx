@@ -208,6 +208,24 @@ export function OperationsView({
    * than restated in the UI. A hardcoded legend drifts the moment someone edits
    * a rule, and then the screen argues with the engine.
    */
+  /**
+   * An operator who sees an ad at 118% of target recommended off deserves the
+   * arithmetic, not just the answer. Showing the blend inline turns "the tool is
+   * wrong" into "the ad set around it is dragging it down", which is a decision
+   * they can act on — and it names the setting to change if they disagree.
+   */
+  const blendExplanation = (decision: RecommendationView): string => {
+    const blended = decision.blendedAchievement ?? decision.weightedAchievement;
+    const own = decision.weightedAchievement;
+    const context = decision.contextWeightedAchievement;
+    if (blended === null) return formatPercent(null);
+    if (own === null || context === null || Math.abs(blended - own) < 0.005) return formatPercent(blended);
+    const contextShare = Math.abs(own - context) < 1e-9 ? null : (own - blended) / (own - context);
+    if (contextShare === null || contextShare <= 0.001) return formatPercent(blended);
+    return `${formatPercent(blended)}  =  ${formatPercent(own)} × ${formatPercent(1 - contextShare)}`
+      + `  +  ${formatPercent(context)} × ${formatPercent(contextShare)}`;
+  };
+
   const bandsFor = (ruleSetId: string | undefined): ThresholdBand[] => {
     const toneOf = (action: ActionRecord["recommendedAction"]) =>
       action === "TURN_OFF" ? "off"
@@ -669,7 +687,7 @@ export function OperationsView({
                 ["Target", money(selected.targetMetric), true, false],
                 [
                   "Điểm gộp (dùng để quyết định)",
-                  formatPercent(selected.blendedAchievement ?? selected.weightedAchievement),
+                  blendExplanation(selected),
                   (selected.blendedAchievement ?? selected.weightedAchievement) !== null,
                   true
                 ],
